@@ -13,6 +13,7 @@ registry (``register_connection_class`` / ``get_connection_class``).
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from .exceptions import CapabilityError, UnsupportedOperation
 from .types import (
@@ -136,12 +137,16 @@ class SandboxConnection(ABC):
 
     # ─── optional: PTY ────────────────────────────────────────
 
-    async def pty_start(self, command: str, **kwargs: object) -> int:
+    async def pty_start(self, command: str, **kwargs: Any) -> int:
         """PTY attach — unsupported unless overridden."""
         raise CapabilityError("pty", backend=self.backend_id)
 
     async def pty_write(self, session_id: int, data: str) -> str:
         """PTY write — unsupported unless overridden."""
+        raise CapabilityError("pty", backend=self.backend_id)
+
+    async def pty_kill(self, session_id: int) -> bool:
+        """PTY kill — unsupported unless overridden."""
         raise CapabilityError("pty", backend=self.backend_id)
 
     # ─── optional: networking ─────────────────────────────────
