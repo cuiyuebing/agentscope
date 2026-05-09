@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import mcp.types as mtypes
 
-from ..mcp import MCPClient, StdioMCPConfig
 from .._logging import logger
+from ..mcp import MCPClient, StdioMCPConfig
 
 if TYPE_CHECKING:
     from .config import MCPServerConfig
@@ -138,11 +138,7 @@ class MCPGateway:
         if mcp_names is None:
             return [r.tool for r in self._tool_routes.values()]
         name_set = set(mcp_names)
-        return [
-            r.tool
-            for r in self._tool_routes.values()
-            if r.mcp_name in name_set
-        ]
+        return [r.tool for r in self._tool_routes.values() if r.mcp_name in name_set]
 
     async def call_tool(
         self,

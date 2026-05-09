@@ -151,6 +151,7 @@ class SandboxConnection(ABC):
         raise CapabilityError("pty", backend=self.backend_id)
 
     # ─── optional: networking ─────────────────────────────────
+
     async def resolve_exposed_port(
         self,
         port: int,
