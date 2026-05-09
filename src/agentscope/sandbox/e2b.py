@@ -16,12 +16,12 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .connection import SandboxConnection, register_connection_class
+from .connection import SandboxConnection, register_sandbox_connection_type
 from .exceptions import UnsupportedOperation
 from .types import (
-    ExecResult,
-    ExposedPortEndpoint,
-    SandboxCreateOptions,
+    SandboxExecutionResult,
+    SandboxInitializationConfig,
+    SandboxInternalEndpoint,
     SerializedSandboxState,
 )
 
@@ -108,12 +108,12 @@ class E2BSandboxConnection(SandboxConnection):
     @classmethod
     async def create(
         cls,
-        options: SandboxCreateOptions,
+        options: SandboxInitializationConfig,
     ) -> "E2BSandboxConnection":
         """Provision a new E2B sandbox and return a connected instance."""
-        if options.backend != "e2b":
+        if options.backend_id != "e2b":
             raise ValueError(
-                f"expected backend 'e2b', got {options.backend!r}",
+                f"expected backend 'e2b', got {options.backend_id!r}",
             )
         AsyncSandbox, _ = _import_e2b()
 
@@ -175,7 +175,7 @@ class E2BSandboxConnection(SandboxConnection):
         If the sandbox was paused, ``AsyncSandbox.connect`` will
         automatically resume it.
         """
-        if state.backend != "e2b":
+        if state.backend_id != "e2b":
             raise ValueError("backend mismatch for resume")
         AsyncSandbox, _ = _import_e2b()
 
@@ -219,12 +219,7 @@ class E2BSandboxConnection(SandboxConnection):
     # ─── path resolution ─────────────────────────────────────
 
     def _resolve(self, path: str) -> str:
-        """Resolve a sandbox-relative path inside the workspace.
-
-        Absolute paths are used as-is (after normalization).
-        Relative paths are joined with the workspace root.
-        Paths that escape the workspace raise ``ValueError``.
-        """
+        """Resolve a sandbox-relative path inside the container workspace."""
         p = PurePosixPath(path)
         if p.is_absolute():
             resolved = posixpath.normpath(p.as_posix())
@@ -246,7 +241,7 @@ class E2BSandboxConnection(SandboxConnection):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
-    ) -> ExecResult:
+    ) -> SandboxExecutionResult:
         """Run a shell command inside the E2B sandbox.
 
         If E2B reports that the sandbox is still pending, wait and retry.
@@ -269,14 +264,14 @@ class E2BSandboxConnection(SandboxConnection):
             )
         except Exception as e:
             if hasattr(e, "exit_code") and hasattr(e, "stdout"):
-                return ExecResult(
+                return SandboxExecutionResult(
                     exit_code=e.exit_code,
                     stdout=(e.stdout or "").encode("utf-8"),
                     stderr=(e.stderr or "").encode("utf-8"),
                 )
             raise
 
-        return ExecResult(
+        return SandboxExecutionResult(
             exit_code=result.exit_code,
             stdout=(result.stdout or "").encode("utf-8"),
             stderr=(result.stderr or "").encode("utf-8"),
@@ -333,7 +328,7 @@ class E2BSandboxConnection(SandboxConnection):
             except Exception:
                 pass
 
-    async def running(self) -> bool:
+    async def is_running(self) -> bool:
         """Best-effort liveness check via ``is_running``."""
         if self._destroyed:
             return False
@@ -344,13 +339,13 @@ class E2BSandboxConnection(SandboxConnection):
 
     # ─── capabilities: exposed ports ──────────────────────────
 
-    async def resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+    async def resolve_exposed_port(self, port: int) -> SandboxInternalEndpoint:
         """Resolve a port to the E2B hostname-based endpoint.
 
         E2B exposes ports via ``{port}-{sandbox_id}.{domain}`` over HTTPS.
         """
         host = self._sandbox.get_host(port)
-        return ExposedPortEndpoint(host=host, port=443, tls=True)
+        return SandboxInternalEndpoint(host=host, port=443, is_tls_enabled=True)
 
     # ─── capabilities: snapshot ───────────────────────────────
 
@@ -522,7 +517,7 @@ class E2BSandboxConnection(SandboxConnection):
     async def export_state(self) -> SerializedSandboxState:
         """Serialize connection state for resume via ``connect()``."""
         return SerializedSandboxState(
-            backend=self.backend_id,
+            backend_id=self.backend_id,
             payload={
                 "sandbox_id": self._sandbox.sandbox_id,
                 "instance_id": self._instance_id,
@@ -533,7 +528,7 @@ class E2BSandboxConnection(SandboxConnection):
         )
 
 
-register_connection_class(E2BSandboxConnection)
+register_sandbox_connection_type(E2BSandboxConnection)
 
 
 async def _run_command_with_retry(
