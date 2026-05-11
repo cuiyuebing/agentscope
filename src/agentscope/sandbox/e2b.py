@@ -345,7 +345,11 @@ class E2BSandboxConnection(SandboxConnection):
         E2B exposes ports via ``{port}-{sandbox_id}.{domain}`` over HTTPS.
         """
         host = self._sandbox.get_host(port)
-        return SandboxInternalEndpoint(host=host, port=443, is_tls_enabled=True)
+        return SandboxInternalEndpoint(
+            host=host,
+            port=443,
+            is_tls_enabled=True,
+        )
 
     # ─── capabilities: snapshot ───────────────────────────────
 
@@ -373,9 +377,7 @@ class E2BSandboxConnection(SandboxConnection):
     async def restore_workspace(self, data: bytes) -> None:
         """Restore the workspace directory from a tar archive."""
         await self._sandbox.files.write("/tmp/_ws_restore.tar", data)
-        rm_cmd = (
-            f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"
-        )
+        rm_cmd = f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"
         await self._sandbox.commands.run(rm_cmd, timeout=30)
         result = await self._sandbox.commands.run(
             f"tar xf /tmp/_ws_restore.tar -C {self._workspace}",
@@ -454,15 +456,19 @@ class E2BSandboxConnection(SandboxConnection):
                 f"PTY session {session_id} not found or already closed",
             )
 
+        # Temporarily reconnect to the PTY stream to capture output.
         buf = bytearray()
         got_data = asyncio.Event()
+
+        def _on_data(chunk: bytes) -> None:
+            buf.extend(chunk)
+            got_data.set()
 
         # Temporarily reconnect to the PTY stream to capture output.
         reader = await self._sandbox.pty.connect(
             pid=session_id,
-            on_data=lambda chunk: (buf.extend(chunk), got_data.set()),
+            on_data=_on_data,
         )
-
         try:
             if data:
                 await self._sandbox.pty.send_stdin(
@@ -494,7 +500,10 @@ class E2BSandboxConnection(SandboxConnection):
             raise ValueError(
                 f"PTY session {session_id} not found or already closed",
             )
-        await self._sandbox.pty.resize(session_id, PtySize(rows=rows, cols=cols))
+        await self._sandbox.pty.resize(
+            session_id,
+            PtySize(rows=rows, cols=cols),
+        )
 
     async def pty_kill(self, session_id: int) -> bool:
         """Kill a PTY session.

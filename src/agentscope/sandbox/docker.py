@@ -154,12 +154,14 @@ class DockerSandboxConnection(SandboxConnection):
 
         if options.volumes:
             create_kwargs["volumes"] = {
-                src: {"bind": dst, "mode": "rw"} for src, dst in options.volumes.items()
+                src: {"bind": dst, "mode": "rw"}
+                for src, dst in options.volumes.items()
             }
 
         if options.exposed_ports:
             create_kwargs["ports"] = {
-                f"{port}/tcp": ("127.0.0.1", None) for port in options.exposed_ports
+                f"{port}/tcp": ("127.0.0.1", None)
+                for port in options.exposed_ports
             }
 
         container = await loop.run_in_executor(
@@ -397,9 +399,7 @@ class DockerSandboxConnection(SandboxConnection):
         """Restore the workspace directory from a tar archive."""
         loop = asyncio.get_running_loop()
 
-        rm_workspace = (
-            f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"
-        )
+        rm_workspace = f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"
 
         def _clear_workspace() -> None:
             self._container.exec_run(["sh", "-c", rm_workspace])

@@ -306,7 +306,9 @@ class Sandbox(WorkspaceBase):
         ``python-frontmatter`` (same as :class:`LocalSkillLoader`). Otherwise
         a minimal ``Skill`` is built from scan / import metadata.
         """
-        return [await self._skill_entry_to_skill(s) for s in self._skills.values()]
+        return [
+            await self._skill_entry_to_skill(s) for s in self._skills.values()
+        ]
 
     def _resolve_skill_dir(self, entry: _SkillEntry) -> str:
         """Host path to the skill dir when ``workspace_root`` is available."""
@@ -376,7 +378,9 @@ class Sandbox(WorkspaceBase):
         if isinstance(spec, str):
             spec = [spec]
         skills_dir = (
-            self._config.skills.skills_dir if self._config.skills else "/root/skills"
+            self._config.skills.skills_dir
+            if self._config.skills
+            else "/root/skills"
         )
         for s in spec:
             cmd = (
@@ -650,7 +654,9 @@ class Sandbox(WorkspaceBase):
         r = await self.connection.exec(full_cmd, timeout=30)
         handle = _MCPServerHandle(name=name, command=command)
         if r.is_ok():
-            pid_line = r.stdout.decode(errors="replace").strip().split("\n")[-1]
+            pid_line = (
+                r.stdout.decode(errors="replace").strip().split("\n")[-1]
+            )
             try:
                 handle.pid = int(pid_line)
             except ValueError:
