@@ -12,6 +12,7 @@ pool is needed — all calls are truly async.
 
 import asyncio
 import posixpath
+import shlex
 import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -148,7 +149,7 @@ class E2BSandboxConnection(SandboxConnection):
         # Ensure workspace directory exists.
         await _run_command_with_retry(
             sandbox,
-            f"mkdir -p {workspace}",
+            f"mkdir -p {shlex.quote(workspace)}",
             timeout=30,
         )
         conn = cls(
@@ -253,7 +254,7 @@ class E2BSandboxConnection(SandboxConnection):
         }
         if env:
             run_kwargs["envs"] = env
-        if timeout is not None:
+        if not timeout:
             run_kwargs["timeout"] = timeout
 
         try:
@@ -263,11 +264,11 @@ class E2BSandboxConnection(SandboxConnection):
                 **run_kwargs,
             )
         except Exception as e:
-            if hasattr(e, "exit_code") and hasattr(e, "stdout"):
+            if hasattr(e, "exit_code"):
                 return SandboxExecutionResult(
                     exit_code=e.exit_code,
-                    stdout=(e.stdout or "").encode("utf-8"),
-                    stderr=(e.stderr or "").encode("utf-8"),
+                    stdout=(getattr(e, "stdout", "") or "").encode("utf-8"),
+                    stderr=(getattr(e, "stderr", "") or "").encode("utf-8"),
                 )
             raise
 
