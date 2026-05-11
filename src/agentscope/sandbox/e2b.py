@@ -378,7 +378,10 @@ class E2BSandboxConnection(SandboxConnection):
     async def restore_workspace(self, data: bytes) -> None:
         """Restore the workspace directory from a tar archive."""
         await self._sandbox.files.write("/tmp/_ws_restore.tar", data)
-        rm_cmd = f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"
+        rm_cmd = (
+            f"rm -rf {self._workspace}/* {self._workspace}"
+            "/.[!.]* 2>/dev/null; true"
+        )
         await self._sandbox.commands.run(rm_cmd, timeout=30)
         result = await self._sandbox.commands.run(
             f"tar xf /tmp/_ws_restore.tar -C {self._workspace}",
@@ -424,7 +427,7 @@ class E2BSandboxConnection(SandboxConnection):
             size=PtySize(rows=rows, cols=cols),
             on_data=lambda _data: None,
             cwd=str(cwd) if cwd is not None else None,
-            envs=dict(env) if env is not None else None,  # type: ignore[arg-type]
+            envs=dict(env) if env is not None else None,
         )
         self._pty_handles[handle.pid] = handle
 

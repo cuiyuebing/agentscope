@@ -399,7 +399,10 @@ class DockerSandboxConnection(SandboxConnection):
         """Restore the workspace directory from a tar archive."""
         loop = asyncio.get_running_loop()
 
-        rm_workspace = f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"
+        rm_workspace = (
+            f"rm -rf {self._workspace}/* {self._workspace}"
+            "/.[!.]* 2>/dev/null; true"
+        )
 
         def _clear_workspace() -> None:
             self._container.exec_run(["sh", "-c", rm_workspace])

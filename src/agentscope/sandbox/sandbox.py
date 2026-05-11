@@ -612,7 +612,8 @@ class Sandbox(WorkspaceBase):
             if dm:
                 extra["domain"] = dm
         if hasattr(cfg.backend, "timeout"):
-            extra["timeout"] = cfg.backend.timeout  # type: ignore[attr-defined]
+            timeout = cfg.backend.timeout  # type: ignore[attr-defined]
+            extra["timeout"] = timeout
         if hasattr(cfg.backend, "metadata"):
             md = cfg.backend.metadata  # type: ignore[attr-defined]
             if md:
@@ -663,7 +664,10 @@ class Sandbox(WorkspaceBase):
                 pass
         else:
             logger.warning(
-                "MCP server %r failed to start in sandbox %s (exit_code=%s, stderr=%s)",
+                (
+                    "MCP server %r failed to start in sandbox "
+                    "%s (exit_code=%s, stderr=%s)"
+                ),
                 name,
                 self._id,
                 r.exit_code,
