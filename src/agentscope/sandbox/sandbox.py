@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import mimetypes
+import shlex
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -384,7 +385,7 @@ class Sandbox(WorkspaceBase):
         )
         for s in spec:
             cmd = (
-                f"cp -r {s} {skills_dir}/ 2>/dev/null || "
+                f"cp -r {s} {shlex.quote(skills_dir)}/ 2>/dev/null || "
                 f"echo '__import_placeholder:{s}'"
             )
             await self.connection.exec(cmd, timeout=60)
@@ -710,7 +711,7 @@ class Sandbox(WorkspaceBase):
             )
         args_json = json.dumps(args)
         r = await self.connection.exec(
-            f"{shell_cmd} '{args_json}'",
+            f"{shell_cmd} {shlex.quote(args_json)}",
             timeout=120,
         )
         return {

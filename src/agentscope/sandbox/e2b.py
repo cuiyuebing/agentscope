@@ -254,7 +254,7 @@ class E2BSandboxConnection(SandboxConnection):
         }
         if env:
             run_kwargs["envs"] = env
-        if not timeout:
+        if timeout:
             run_kwargs["timeout"] = timeout
 
         try:
