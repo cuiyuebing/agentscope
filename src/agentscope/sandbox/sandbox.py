@@ -627,7 +627,7 @@ class Sandbox(WorkspaceBase):
             extra["endpoint"] = cfg.endpoint
 
         return SandboxInitializationConfig(
-            backend_id=cfg.backend.type,
+            backend_type=cfg.backend.type,
             env=env,
             exposed_ports=ports,
             volumes=volumes,

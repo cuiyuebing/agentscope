@@ -20,6 +20,8 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from e2b import AsyncSandbox, PtySize
+
 from .connection import SandboxConnection, register_sandbox_connection_type
 from .exceptions import UnsupportedOperation
 from .types import (
@@ -54,23 +56,6 @@ class E2BSandboxConnection(SandboxConnection):
     _supports_snapshot = True
     _supports_pty = True
 
-    @staticmethod
-    def _import_e2b_sdk() -> tuple[Any, Any]:
-        """Lazy-import ``e2b`` SDK; raises ``ImportError`` with guidance.
-
-        Import is deferred so importing ``agentscope`` does not require
-        ``e2b`` unless this backend is actually used.
-        """
-        try:
-            from e2b import AsyncSandbox as _AsyncSandbox
-            from e2b import PtySize as _PtySize
-        except ImportError as exc:
-            raise ImportError(
-                "E2BSandboxConnection requires the `e2b` "
-                "package. Install with: pip install agentscope[sandbox]",
-            ) from exc
-        return _AsyncSandbox, _PtySize
-
     @classmethod
     def _working_dir_from_extra(cls, extra: dict[str, Any]) -> str:
         """Resolve remote working directory from
@@ -90,7 +75,7 @@ class E2BSandboxConnection(SandboxConnection):
 
     def __init__(
         self,
-        sandbox: "AsyncSandbox",
+        sandbox: AsyncSandbox,
         *,
         instance_id: str,
         working_dir: str | None = None,
@@ -124,7 +109,7 @@ class E2BSandboxConnection(SandboxConnection):
         self._pty_handles: dict[int, Any] = {}
 
     @property
-    def backend_id(self) -> str:
+    def backend_type(self) -> str:
         return "e2b"
 
     @property
@@ -149,11 +134,9 @@ class E2BSandboxConnection(SandboxConnection):
         options: SandboxInitializationConfig,
     ) -> "E2BSandboxConnection":
         """Provision a new E2B sandbox and return a connected instance."""
-        if options.backend_id != "e2b":
-            msg = f"expected backend 'e2b', got {options.backend_id!r}"
+        if options.backend_type != "e2b":
+            msg = f"expected backend 'e2b', got {options.backend_type!r}"
             raise ValueError(msg)
-
-        AsyncSandbox, _ = cls._import_e2b_sdk()
 
         template: str = options.extra.get("template", cls.DEFAULT_TEMPLATE)
         working_dir: str = cls._working_dir_from_extra(options.extra)
@@ -213,7 +196,6 @@ class E2BSandboxConnection(SandboxConnection):
         If the sandbox was paused, ``AsyncSandbox.connect`` will
         automatically resume it.
         """
-        AsyncSandbox, _ = cls._import_e2b_sdk()
 
         e2b_sandbox_id = state.payload.get("sandbox_id")
         if not e2b_sandbox_id or not isinstance(e2b_sandbox_id, str):
@@ -450,8 +432,6 @@ class E2BSandboxConnection(SandboxConnection):
             The PID of the PTY process (used as ``session_id`` for
             subsequent ``pty_write`` calls).
         """
-        _, PtySize = self._import_e2b_sdk()
-
         rows = int(kwargs.get("rows", self.DEFAULT_PTY_ROWS))
         cols = int(kwargs.get("cols", self.DEFAULT_PTY_COLS))
         cwd = kwargs.get("cwd")
@@ -548,7 +528,6 @@ class E2BSandboxConnection(SandboxConnection):
             rows: New terminal row count.
             cols: New terminal column count.
         """
-        _, PtySize = self._import_e2b_sdk()
 
         if session_id not in self._pty_handles:
             raise ValueError(
@@ -580,7 +559,7 @@ class E2BSandboxConnection(SandboxConnection):
     async def export_state(self) -> SerializedSandboxState:
         """Serialize connection state for resume via ``connect()``."""
         return SerializedSandboxState(
-            backend_id=self.backend_id,
+            backend_type=self.backend_type,
             payload={
                 "sandbox_id": self._sandbox.sandbox_id,
                 "instance_id": self._instance_id,
