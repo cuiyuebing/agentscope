@@ -18,7 +18,7 @@ import posixpath
 import shlex
 import uuid
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from e2b import AsyncSandbox, PtySize
 
@@ -30,9 +30,6 @@ from .types import (
     SandboxInternalEndpoint,
     SerializedSandboxState,
 )
-
-if TYPE_CHECKING:
-    from e2b import AsyncSandbox
 
 
 class E2BSandboxConnection(SandboxConnection):

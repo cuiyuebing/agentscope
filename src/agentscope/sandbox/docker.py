@@ -38,7 +38,6 @@ from .types import (
 
 if TYPE_CHECKING:
     from docker import DockerClient
-    from docker.models.containers import Container
 
 
 class DockerSandboxConnection(SandboxConnection):
