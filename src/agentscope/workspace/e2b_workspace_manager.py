@@ -19,8 +19,7 @@ Usage::
 
 Pool usage (RL rollout)::
 
-    manager.enable_pool(capacity=8)
-    await manager.warm_up_pool()
+    await manager.enable_pool(capacity=8)
 
     ws = await manager.acquire_from_pool()
     # ... rollout ...
@@ -73,16 +72,15 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             self._template,
         )
 
-    async def close(self) -> None:
-        await self._close_all_workspaces()
-        await self._close_pool()
+    async def _do_close(self) -> None:
+        pass
 
     async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
         ws = E2BWorkspace(
             template=kwargs.get("template", self._template),
             api_key=kwargs.get("api_key", self._api_key),
             domain=kwargs.get("domain", self._domain),
-            timeout=kwargs.get("timeout", self._timeout_seconds),
+            timeout_seconds=kwargs.get("timeout", self._timeout_seconds),
             working_dir=kwargs.get("working_dir", self._working_dir),
             mcp_servers=list(
                 kwargs.get("mcp_servers", self._default_mcp_servers),

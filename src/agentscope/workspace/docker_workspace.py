@@ -26,6 +26,7 @@ import tarfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -43,7 +44,7 @@ from ..skill import Skill
 from ..tool import ToolBase
 from .config import MCPServerConfig
 from .gateway import GatewayMixin
-from .types import ExecutionResult, InternalEndpoint, SerializedWorkspaceState
+from .types import ExecutionResult, SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
 
 _EXECUTOR = ThreadPoolExecutor(
@@ -65,6 +66,21 @@ and processes.
 └── sessions/    # offloaded context and tool results
 ```
 </workspace>"""
+
+
+@dataclass(frozen=True, slots=True)
+class InternalEndpoint:
+    """Host-accessible endpoint for a service running inside a container.
+
+    Attributes:
+        host: Hostname or IP address.
+        port: Port number.
+        is_tls_enabled: Whether TLS is active on this endpoint.
+    """
+
+    host: str
+    port: int
+    is_tls_enabled: bool = False
 
 
 class DockerWorkspace(GatewayMixin, WorkspaceBase):
@@ -212,6 +228,15 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             await self._start_gateway()
 
         self._started = True
+
+    async def reset(self) -> None:
+        """Reset container workspace to a clean state.
+
+        Clears session data and offloaded files inside the container.
+        """
+        await self._exec(
+            f"rm -rf {self._working_dir}/sessions {self._working_dir}/data",
+        )
 
     async def is_alive(self) -> bool:
         if not self._container:

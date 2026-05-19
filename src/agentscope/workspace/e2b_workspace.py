@@ -150,6 +150,15 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
 
         self._started = True
 
+    async def reset(self) -> None:
+        """Reset sandbox workspace to a clean state.
+
+        Clears session data and offloaded files inside the sandbox.
+        """
+        await self._exec(
+            f"rm -rf {self._working_dir}/sessions {self._working_dir}/data",
+        )
+
     async def is_alive(self) -> bool:
         if not self._sandbox or not self._started:
             return False
