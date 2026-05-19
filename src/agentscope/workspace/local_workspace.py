@@ -146,9 +146,7 @@ class LocalWorkspace(WorkspaceBase):
             ) and not mcp.is_connected:
                 await mcp.connect()
 
-        skills_dir = os.path.join(self._workdir, "skills")
-        os.makedirs(skills_dir, exist_ok=True)
-        await self._install_initial_skills(skills_dir)
+        await self._install_initial_skills()
 
     async def close(self) -> None:
         for mcp in self._mcps:
@@ -175,7 +173,7 @@ class LocalWorkspace(WorkspaceBase):
     async def list_skills(self) -> list[Skill]:
         skills_dir = os.path.join(self._workdir, "skills")
         if not await aiofiles.ospath.isdir(skills_dir):
-            return []
+            raise RuntimeError("Cannot Read Skill Directory")
 
         skills_file = await self._load_skills_file(skills_dir)
         current_mtime = await aiofiles.ospath.getmtime(skills_dir)
@@ -425,7 +423,9 @@ class LocalWorkspace(WorkspaceBase):
 
     # ── internal: initial skill install ────────────────────────────
 
-    async def _install_initial_skills(self, skills_dir: str) -> None:
+    async def _install_initial_skills(self) -> None:
+        skills_dir = os.path.join(self._workdir, "skills")
+        os.makedirs(skills_dir, exist_ok=True)
         skills_file = await self._load_skills_file(skills_dir)
         existing = skills_file["skills"]
         existing_hashes = {e["hash"] for e in existing.values()}

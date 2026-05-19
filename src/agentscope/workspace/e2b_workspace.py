@@ -329,11 +329,22 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         logger.info("E2BWorkspace: added skill %r", dir_name)
 
     async def remove_skill(self, name: str) -> None:
-        dest = f"{self.SKILLS_DIR}/{shlex.quote(name)}"
+        skills = await self.list_skills()
+        target_dir: str | None = None
+        for skill in skills:
+            if skill.name == name:
+                target_dir = skill.dir
+                break
+        if target_dir is None:
+            available = [s.name for s in skills]
+            raise KeyError(
+                f"Skill {name!r} not found. Available: {available}",
+            )
+        dest = shlex.quote(target_dir)
         r = await self._exec(f"rm -rf {dest}")
         if not r.is_ok():
             raise RuntimeError(
-                f"Failed to remove skill: {r.stderr.decode()}",
+                f"Failed to remove skill {name!r}: {r.stderr.decode()}",
             )
         logger.info("E2BWorkspace: removed skill %r", name)
 
