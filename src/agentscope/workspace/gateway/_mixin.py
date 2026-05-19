@@ -18,16 +18,16 @@ import asyncio
 import json
 import uuid
 from abc import abstractmethod
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from ..._logging import logger
 
 if TYPE_CHECKING:
+    from ...mcp import MCPClient
     from ..config import MCPServerConfig
     from ..types import ExecutionResult
-    from ...mcp import MCPClient
 
 
 class _RestToolProxy:
@@ -200,7 +200,7 @@ class GatewayMixin:
                 "the constructor or initialize the workspace first.",
             )
         body: dict[str, Any] = {"name": config.name}
-        if config.transport == "http":
+        if config.protocol == "http":
             body["transport"] = "http"
             body["url"] = config.url
         else:

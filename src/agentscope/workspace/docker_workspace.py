@@ -29,10 +29,7 @@ from copy import deepcopy
 from pathlib import PurePosixPath
 from typing import Any
 
-from .workspace_base import WorkspaceBase
-from .gateway import GatewayMixin
-from .config import MCPServerConfig
-from .types import ExecutionResult, InternalEndpoint, SerializedWorkspaceState
+from .._logging import logger
 from ..mcp import MCPClient
 from ..message import (
     Base64Source,
@@ -44,7 +41,10 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .._logging import logger
+from .config import MCPServerConfig
+from .gateway import GatewayMixin
+from .types import ExecutionResult, InternalEndpoint, SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
 
 _EXECUTOR = ThreadPoolExecutor(
     max_workers=8,
@@ -98,7 +98,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     ) -> None:
         self._image = image
         self._working_dir = working_dir
-        self._mcp_servers = list(mcp_servers or [])
+        self._mcp_servers = mcp_servers or []
         self._gateway_port = gateway_port
         self._exposed_ports = list(exposed_ports or [])
         self._volumes = dict(volumes or {})
@@ -317,7 +317,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         msgs: list[Msg],
         **kwargs: Any,
     ) -> str:
-        base = f"sessions/{session_id}"
+        base = f"sessions/{session_id}"  # 改成workspace/sessions
         path = f"{base}/context.jsonl"
 
         copied = deepcopy(msgs)
@@ -352,7 +352,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         tool_result: ToolResultBlock,
         **kwargs: Any,
     ) -> str:
-        base = f"sessions/{session_id}"
+        base = f"sessions/{session_id}"  # 同上
         path = f"{base}/tool_result-{tool_result.id}.txt"
 
         parts: list[str] = []
@@ -391,7 +391,6 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             )
 
         dir_name = os.path.basename(os.path.abspath(skill_path))
-        dest = f"{self.SKILLS_DIR}/{dir_name}"
         await self._exec(f"mkdir -p {self.SKILLS_DIR}")
 
         # tar the local skill directory and put it into the container
@@ -409,7 +408,11 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             self._container.put_archive(self.SKILLS_DIR, tar_data)
 
         await loop.run_in_executor(_EXECUTOR, _put)
-        logger.info("DockerWorkspace: added skill %r at %s", dir_name, dest)
+        logger.info(
+            "DockerWorkspace: added skill %r at %s",
+            dir_name,
+            f"{self.SKILLS_DIR}/{dir_name}",
+        )
 
     async def remove_skill(self, name: str) -> None:
         dest = f"{self.SKILLS_DIR}/{shlex.quote(name)}"
@@ -435,7 +438,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
                 "mcp_servers": [
                     {
                         "name": s.name,
-                        "transport": s.transport,
+                        "protocol": s.protocol,
                         "command": s.command,
                         "args": s.args,
                         "url": s.url,

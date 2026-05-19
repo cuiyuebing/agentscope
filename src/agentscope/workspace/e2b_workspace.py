@@ -20,10 +20,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
-from .workspace_base import WorkspaceBase
-from .gateway import GatewayMixin
-from .config import MCPServerConfig
-from .types import ExecutionResult, SerializedWorkspaceState
+from .._logging import logger
 from ..mcp import MCPClient
 from ..message import (
     Base64Source,
@@ -35,7 +32,10 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .._logging import logger
+from .config import MCPServerConfig
+from .gateway import GatewayMixin
+from .types import ExecutionResult, SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have access to an E2B cloud-sandbox workspace.
@@ -73,7 +73,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
         domain: str = "",
-        timeout: int = DEFAULT_TIMEOUT,
+        timeout_seconds: int = DEFAULT_TIMEOUT,
         working_dir: str = DEFAULT_WORKING_DIR,
         mcp_servers: list[MCPServerConfig] | None = None,
         gateway_port: int = GATEWAY_PORT,
@@ -85,11 +85,11 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         self._template = template
         self._api_key = api_key
         self._domain = domain
-        self._timeout = timeout
+        self._timeout_seconds = timeout_seconds
         self._working_dir = working_dir
-        self._mcp_servers = list(mcp_servers or [])
+        self._mcp_servers = mcp_servers or []
         self._gateway_port = gateway_port
-        self._env = dict(env or {})
+        self._env = env or {}
         self._metadata = dict(metadata or {})
         self._startup_commands = list(startup_commands or [])
         self._instructions = instructions
@@ -120,7 +120,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
 
         create_kwargs: dict[str, Any] = {
             "template": self._template,
-            "timeout": self._timeout,
+            "timeout": self._timeout_seconds,
         }
         if self._api_key:
             create_kwargs["api_key"] = self._api_key
@@ -392,7 +392,6 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
                         )
                     raise
                 await asyncio.sleep(delay)
-                delay = min(delay * 1.5, 5.0)
         raise RuntimeError("unreachable")
 
     # ── GatewayMixin hooks ─────────────────────────────────────────

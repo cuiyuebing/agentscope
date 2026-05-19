@@ -29,12 +29,12 @@ Pool usage (RL rollout)::
 
 from typing import Any
 
-from .workspace_manager_base import WorkspaceManagerBase
-from .workspace_base import WorkspaceBase
-from .e2b_workspace import E2BWorkspace
-from .config import MCPServerConfig
-from .types import SerializedWorkspaceState
 from .._logging import logger
+from .config import MCPServerConfig
+from .e2b_workspace import E2BWorkspace
+from .types import SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
+from .workspace_manager_base import WorkspaceManagerBase
 
 
 class E2BWorkspaceManager(WorkspaceManagerBase):
@@ -45,7 +45,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         template: str = E2BWorkspace.DEFAULT_TEMPLATE,
         api_key: str = "",
         domain: str = "",
-        timeout: int = E2BWorkspace.DEFAULT_TIMEOUT,
+        timeout_seconds: int = E2BWorkspace.DEFAULT_TIMEOUT,
         working_dir: str = E2BWorkspace.DEFAULT_WORKING_DIR,
         default_mcp_servers: list[MCPServerConfig] | None = None,
         gateway_port: int = E2BWorkspace.GATEWAY_PORT,
@@ -57,7 +57,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._template = template
         self._api_key = api_key
         self._domain = domain
-        self._timeout = timeout
+        self._timeout_seconds = timeout_seconds
         self._working_dir = working_dir
         self._default_mcp_servers = list(default_mcp_servers or [])
         self._gateway_port = gateway_port
@@ -82,7 +82,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             template=kwargs.get("template", self._template),
             api_key=kwargs.get("api_key", self._api_key),
             domain=kwargs.get("domain", self._domain),
-            timeout=kwargs.get("timeout", self._timeout),
+            timeout=kwargs.get("timeout", self._timeout_seconds),
             working_dir=kwargs.get("working_dir", self._working_dir),
             mcp_servers=list(
                 kwargs.get("mcp_servers", self._default_mcp_servers),

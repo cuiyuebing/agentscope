@@ -30,9 +30,7 @@ import aiofiles.ospath
 import frontmatter
 from pydantic import AnyUrl
 
-from .workspace_base import WorkspaceBase
-from .config import MCPServerConfig
-from .types import SerializedWorkspaceState
+from .._logging import logger
 from ..mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 from ..message import (
     Base64Source,
@@ -52,8 +50,9 @@ from ..tool import (
     ToolBase,
     Write,
 )
-from .._logging import logger
-
+from .config import MCPServerConfig
+from .types import SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
 
 # ── skill index types ─────────────────────────────────────────────
 
@@ -305,7 +304,7 @@ class LocalWorkspace(WorkspaceBase):
                     "Remove it first or use a different name.",
                 )
 
-        if config.transport == "http":
+        if config.protocol == "http":
             mcp_cfg = HttpMCPConfig(
                 url=config.url,
                 headers=config.headers or None,
