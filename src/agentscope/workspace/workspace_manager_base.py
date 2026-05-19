@@ -322,10 +322,10 @@ class WorkspaceManagerBase(ABC):
                 for _ in range(-delta):
                     if not self._pool_free.empty():
                         ws_id = await self._pool_free.get()
-                        ws = self._pool_workspaces.pop(ws_id, None)
-                        if ws:
+                        if ws_id in self._pool_workspaces:
+                            removed = self._pool_workspaces.pop(ws_id)
                             try:
-                                await ws.close()
+                                await removed.close()
                             except Exception as e:
                                 logger.warning(
                                     "Pool: error closing workspace %s: %s",
