@@ -19,9 +19,10 @@ Two workspace managers (for agent-service deployments):
 """
 
 from .config import MCPServerConfig
+from .docker_workspace import InternalEndpoint
 from .local_workspace import LocalWorkspace
 from .local_workspace_manager import LocalWorkspaceManager
-from .types import ExecutionResult, InternalEndpoint, SerializedWorkspaceState
+from .types import ExecutionResult, SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
 from .workspace_manager_base import WorkspaceManagerBase
 
@@ -36,10 +37,6 @@ __all__ = [
     "ExecutionResult",
     "InternalEndpoint",
     "SerializedWorkspaceState",
-    # exceptions
-    "CapabilityError",
-    "UnsupportedOperation",
-    "WorkspaceError",
     # managers
     "WorkspaceManagerBase",
     "LocalWorkspaceManager",

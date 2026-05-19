@@ -111,7 +111,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             mcp_cfgs.append(
                 MCPServerConfig(
                     name=s["name"],
-                    transport=s.get("transport", "stdio"),
+                    protocol=s.get("transport", "stdio"),
                     command=s.get("command", ""),
                     args=s.get("args", []),
                     url=s.get("url", ""),

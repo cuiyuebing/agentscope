@@ -97,7 +97,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         self._id = uuid.uuid4().hex[:12]
         self._sandbox: Any = None  # e2b.AsyncSandbox
         self._gateway_token = ""
-        self._gateway_mcpc: MCPClient | None = None
+        self._gateway_mcp_client: MCPClient | None = None
         self._gateway_base_url = ""
         self._started = False
 
@@ -168,12 +168,12 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
             return False
 
     async def close(self) -> None:
-        if self._gateway_mcpc and self._gateway_mcpc.is_connected:
+        if self._gateway_mcp_client and self._gateway_mcp_client.is_connected:
             try:
-                await self._gateway_mcpc.close()
+                await self._gateway_mcp_client.close()
             except Exception:
                 pass
-            self._gateway_mcpc = None
+            self._gateway_mcp_client = None
 
         if self._sandbox:
             try:
