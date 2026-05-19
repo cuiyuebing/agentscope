@@ -116,10 +116,10 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         self._working_dir = working_dir
         self._mcp_servers = mcp_servers or []
         self._gateway_port = gateway_port
-        self._exposed_ports = list(exposed_ports or [])
-        self._volumes = dict(volumes or {})
-        self._env = dict(env or {})
-        self._startup_commands = list(startup_commands or [])
+        self._exposed_ports = exposed_ports or []
+        self._volumes = volumes or {}
+        self._env = env or {}
+        self._startup_commands = startup_commands or []
         self._instructions = instructions
 
         self._id = uuid.uuid4().hex[:12]
@@ -342,7 +342,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         msgs: list[Msg],
         **kwargs: Any,
     ) -> str:
-        base = f"sessions/{session_id}"  # 改成workspace/sessions
+        base = f"{self._working_dir}/sessions/{session_id}"
         path = f"{base}/context.jsonl"
 
         copied = deepcopy(msgs)
@@ -377,7 +377,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         tool_result: ToolResultBlock,
         **kwargs: Any,
     ) -> str:
-        base = f"sessions/{session_id}"  # 同上
+        base = f"{self._working_dir}/sessions/{session_id}"
         path = f"{base}/tool_result-{tool_result.id}.txt"
 
         parts: list[str] = []

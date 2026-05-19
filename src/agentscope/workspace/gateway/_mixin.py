@@ -204,7 +204,7 @@ class GatewayMixin:
 
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.post(
-                f"{self._gateway_base_url}/admin/add",
+                f"{self._gateway_base_url}/mcp/add",
                 json=body,
                 headers=headers,
                 timeout=30.0,
@@ -235,7 +235,7 @@ class GatewayMixin:
 
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.post(
-                f"{self._gateway_base_url}/admin/remove",
+                f"{self._gateway_base_url}/mcp/remove",
                 json={"name": name},
                 headers=headers,
                 timeout=30.0,
