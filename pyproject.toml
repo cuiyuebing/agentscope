@@ -68,8 +68,8 @@ service = [
 storage = [
     "redis",
 ]
-# ------------ Sandbox ------------
-sandbox = [
+# ------------ Workspace ------------
+workspace = [
     "docker>=7.0",
     "e2b>=2.0",
 ]
