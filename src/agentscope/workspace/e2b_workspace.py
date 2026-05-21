@@ -32,7 +32,6 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .config import MCPServerConfig
 from .mcp_enhanced_workspace import WorkspaceWithMCP
 from .types import ExecutionResult, SerializedWorkspaceState
 
