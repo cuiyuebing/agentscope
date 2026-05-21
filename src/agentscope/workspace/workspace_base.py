@@ -23,8 +23,11 @@ Consumers:
 - **Developer** — manages lifecycle via ``initialize`` / ``close``.
 """
 
-from abc import ABC, abstractmethod
+import uuid
+from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 if TYPE_CHECKING:
     from ..mcp import MCPClient
@@ -35,15 +38,27 @@ if TYPE_CHECKING:
     from .types import ExecutionResult
 
 
-class WorkspaceBase(ABC):
-    """Abstract base class for all workspace implementations."""
+class WorkspaceBase(BaseModel):
+    """Abstract base class for all workspace implementations.
+
+    Serializable configuration fields are declared as pydantic Fields.
+    Runtime state (connections, clients, etc.) uses PrivateAttr and is
+    excluded from serialisation.  Use ``model_dump()`` /
+    ``model_validate()`` for export/restore of workspace configuration.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # ── identity ──────────────────────────────────────────────────
 
-    @property
-    @abstractmethod
-    def workspace_id(self) -> str:
-        """Unique identifier for this workspace instance."""
+    workspace_id: str = Field(
+        default_factory=lambda: uuid.uuid4().hex[:12],
+        description="Unique identifier for this workspace instance.",
+    )
+
+    # ── runtime state (excluded from serialisation) ───────────────
+
+    _started: bool = PrivateAttr(default=False)
 
     # ── lifecycle (developer) ──────────────────────────────────────
 

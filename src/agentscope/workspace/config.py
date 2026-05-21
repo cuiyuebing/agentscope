@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Configuration dataclasses for workspace backends."""
+"""Configuration models for workspace backends."""
 
-from dataclasses import dataclass, field
+from pydantic import BaseModel, Field
 
 
-@dataclass(slots=True)
-class MCPServerConfig:
+class MCPServerConfig(BaseModel):
     """One MCP server to manage inside a workspace.
 
     Supports two transport protocol types:
@@ -22,10 +21,10 @@ class MCPServerConfig:
 
     # stdio fields
     command: str = ""
-    args: list[str] = field(default_factory=list)
-    env: dict[str, str] = field(default_factory=dict)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
 
     # http fields
     url: str = ""
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
     timeout: float = 30.0

@@ -23,18 +23,20 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import mcp.types as _mcp_types
+from pydantic import Field, PrivateAttr
 
+from .._logging import logger
 from ..mcp import MCPClient
 from ..mcp._config import HttpMCPConfig
 from ..message import TextBlock, ToolResultState
 from ..permission import PermissionBehavior, PermissionDecision
 from ..tool._base import ToolBase
 from ..tool._response import ToolChunk
-from .._logging import logger
+from .config import MCPServerConfig
 from .workspace_base import WorkspaceBase
 
 if TYPE_CHECKING:
-    from .config import MCPServerConfig
+    pass
 
 
 # ── REST-backed ToolBase / MCPClient implementations ─────────────
@@ -189,36 +191,26 @@ class _RestGatewayClient(MCPClient):
 
 
 class WorkspaceWithMCP(WorkspaceBase):
-    """Intermediate base for MCP-enhanced workspaces."""
+    """Intermediate base for MCP-enhanced workspaces.
 
-    # Class-level type annotations help mypy when running with
-    # ``--follow-imports=skip`` (used in pre-commit).  Actual values
-    # are always set in ``__init__``.
+    Serializable configuration:
+    - ``mcp_servers``: list of MCP server configs
+    - ``gateway_port``: port the in-workspace gateway listens on
+    """
 
-    def __init__(
-        self,
-        *,
-        mcp_servers: "list[MCPServerConfig] | None" = None,
-        gateway_port: int = 5600,
-    ) -> None:
-        """Initialise MCP gateway state for a workspace.
+    mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
+    gateway_port: int = Field(default=5600)
 
-        Args:
-            mcp_servers: MCP servers to run through the workspace
-                gateway.
-            gateway_port: Port that the in-workspace gateway listens on.
-        """
-        self._mcp_servers = list(mcp_servers or [])
-        self._gateway_port = gateway_port
-        self._gateway_token = ""
-        self._gateway_mcp_client: _RestGatewayClient | None = None
-        self._gateway_base_url = ""
+    # Runtime state (excluded from serialisation)
+    _gateway_token: str = PrivateAttr(default="")
+    _gateway_mcp_client: _RestGatewayClient | None = PrivateAttr(default=None)
+    _gateway_base_url: str = PrivateAttr(default="")
 
     # ── lifecycle ─────────────────────────────────────────────────
 
     async def initialize(self) -> None:
         """Start the in-workspace MCP gateway if servers are configured."""
-        if self._mcp_servers:
+        if self.mcp_servers:
             await self._start_gateway()
 
     # ── hooks for subclasses ──────────────────────────────────────
@@ -357,13 +349,13 @@ class WorkspaceWithMCP(WorkspaceBase):
         launch = (
             'PY="$(command -v python3 2>/dev/null || command -v python)"; '
             f'nohup "$PY" -u {gateway_script}'
-            f" --config {config_path} --port {self._gateway_port}"
+            f" --config {config_path} --port {self.gateway_port}"
             " > /tmp/gw.log 2>&1 &"
         )
         await self._exec(launch, timeout=5)
 
         self._gateway_base_url = await self._resolve_base_url(
-            self._gateway_port,
+            self.gateway_port,
         )
 
         try:
@@ -399,7 +391,7 @@ class WorkspaceWithMCP(WorkspaceBase):
     def _build_gateway_config(self) -> dict[str, Any]:
         """Build the JSON config dict for the in-container gateway."""
         servers = []
-        for s in self._mcp_servers:
+        for s in self.mcp_servers:
             entry: dict[str, Any] = {"name": s.name}
             if s.protocol == "http":
                 entry["transport"] = "http"

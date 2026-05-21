@@ -27,7 +27,6 @@ import mimetypes
 import os
 import re
 import shutil
-import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -35,7 +34,7 @@ from typing import Any
 import aiofiles
 import aiofiles.ospath
 import frontmatter
-from pydantic import AnyUrl
+from pydantic import AnyUrl, Field, PrivateAttr
 
 from .._logging import logger
 from ..mcp import MCPClient
@@ -60,7 +59,6 @@ from ..tool import (
 from .config import MCPServerConfig
 from .types import ExecutionResult, SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
-
 
 # --- helpers ---
 
@@ -128,47 +126,35 @@ class LocalWorkspace(WorkspaceBase):
                 └── tool_result-{id}.txt
     """
 
-    def __init__(
-        self,
-        workdir: str,
-        skill_paths: list[str] | None = None,
-        default_mcps: list[MCPClient] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
-    ) -> None:
-        """Create a new local workspace.
+    # ── serializable configuration fields ─────────────────────────
 
-        Args:
-            workdir: Absolute path to the workspace root directory.
-                Created automatically if it does not exist.
-            skill_paths: Local directories to seed as skills on
-                first initialisation.  Each must contain a
-                ``SKILL.md`` with ``name`` and ``description``
-                fields in its YAML front matter.
-            default_mcps: MCP clients to use when no persisted
-                ``.mcp`` file exists.  On subsequent initialisations
-                the workspace restores MCPs from ``.mcp`` instead.
-            instructions: System-prompt fragment injected into the
-                agent's context.  Supports ``{workdir}`` placeholder.
-        """
-        self._id = uuid.uuid4().hex[:12]
-        self._workdir = os.path.abspath(workdir)
-        self._skill_paths = list(
-            dict.fromkeys(os.path.abspath(p) for p in (skill_paths or [])),
+    workdir: str = Field(
+        description="Absolute path to the workspace root directory.",
+    )
+    instructions: str = _DEFAULT_INSTRUCTIONS
+
+    # ── init-only fields (excluded from serialisation) ────────────
+
+    skill_paths: list[str] = Field(default_factory=list, exclude=True)
+    default_mcps: list[MCPClient] = Field(
+        default_factory=list,
+        exclude=True,
+    )
+
+    # ── runtime state (excluded from serialisation) ───────────────
+
+    _mcps: list[MCPClient] = PrivateAttr(default_factory=list)
+    _offload_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+    _skill_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Normalize paths after pydantic construction."""
+        # Ensure workdir is absolute
+        self.workdir = os.path.abspath(self.workdir)
+        # Deduplicate and normalize skill paths
+        self.skill_paths = list(
+            dict.fromkeys(os.path.abspath(p) for p in self.skill_paths),
         )
-        self._instructions = instructions
-        self._default_mcps: list[MCPClient] = list(default_mcps or [])
-        self._mcps: list[MCPClient] = []
-        self._offload_lock = asyncio.Lock()
-        self._skill_lock = asyncio.Lock()
-
-    @property
-    def workspace_id(self) -> str:
-        return self._id
-
-    @property
-    def workdir(self) -> str:
-        """Absolute path to the workspace root directory."""
-        return self._workdir
 
     # --- lifecycle ---
 
@@ -179,7 +165,7 @@ class LocalWorkspace(WorkspaceBase):
         ``default_mcps`` are used.  ``skill_paths`` are seeded on first
         use.
         """
-        mcp_file = os.path.join(self._workdir, ".mcp")
+        mcp_file = os.path.join(self.workdir, ".mcp")
         if await aiofiles.ospath.exists(mcp_file):
             async with aiofiles.open(
                 mcp_file,
@@ -191,7 +177,7 @@ class LocalWorkspace(WorkspaceBase):
                     for m in json.loads(await f.read())
                 ]
         else:
-            self._mcps = list(self._default_mcps)
+            self._mcps = list(self.default_mcps)
 
         for mcp in self._mcps:
             if mcp.is_stateful and not mcp.is_connected:
@@ -201,11 +187,11 @@ class LocalWorkspace(WorkspaceBase):
 
     async def reset(self) -> None:
         """Clear session data and offloaded files."""
-        sessions_dir = os.path.join(self._workdir, "sessions")
+        sessions_dir = os.path.join(self.workdir, "sessions")
         if os.path.isdir(sessions_dir):
             await asyncio.to_thread(shutil.rmtree, sessions_dir)
 
-        data_dir = os.path.join(self._workdir, "data")
+        data_dir = os.path.join(self.workdir, "data")
         if os.path.isdir(data_dir):
             await asyncio.to_thread(shutil.rmtree, data_dir)
 
@@ -240,7 +226,7 @@ class LocalWorkspace(WorkspaceBase):
                     command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=self._workdir,
+                    cwd=self.workdir,
                 ),
                 timeout=timeout,
             )
@@ -264,7 +250,7 @@ class LocalWorkspace(WorkspaceBase):
 
     async def get_instructions(self) -> str:
         """Return the workspace-specific system prompt fragment."""
-        return self._instructions.format(workdir=self._workdir)
+        return self.instructions.format(workdir=self.workdir)
 
     # --- tool discovery ---
 
@@ -280,7 +266,7 @@ class LocalWorkspace(WorkspaceBase):
 
     async def _save_mcp_file(self) -> None:
         """Persist the current MCP client list to ``.mcp``."""
-        mcp_file = os.path.join(self._workdir, ".mcp")
+        mcp_file = os.path.join(self.workdir, ".mcp")
         try:
             async with aiofiles.open(
                 mcp_file,
@@ -371,7 +357,7 @@ class LocalWorkspace(WorkspaceBase):
 
     async def list_skills(self) -> list[Skill]:
         """List all valid skills by scanning the skills directory."""
-        skills_dir = os.path.join(self._workdir, "skills")
+        skills_dir = os.path.join(self.workdir, "skills")
 
         if not await aiofiles.ospath.isdir(skills_dir):
             return []
@@ -414,7 +400,7 @@ class LocalWorkspace(WorkspaceBase):
     ) -> str:
         """Offload conversation context to a JSONL file on disk."""
         path = os.path.join(
-            self._workdir,
+            self.workdir,
             "sessions",
             session_id,
             "context.jsonl",
@@ -460,7 +446,7 @@ class LocalWorkspace(WorkspaceBase):
             The absolute file path of the written result.
         """
         path = os.path.join(
-            self._workdir,
+            self.workdir,
             "sessions",
             session_id,
             f"tool_result-{tool_result.id}.txt",
@@ -501,8 +487,8 @@ class LocalWorkspace(WorkspaceBase):
         return SerializedWorkspaceState(
             backend_type="local",
             payload={
-                "workspace_id": self._id,
-                "workdir": self._workdir,
+                "workspace_id": self.workspace_id,
+                "workdir": self.workdir,
             },
         )
 
@@ -523,7 +509,7 @@ class LocalWorkspace(WorkspaceBase):
         """
         skill_path = os.path.abspath(skill_path)
         async with self._skill_lock:
-            skills_dir = os.path.join(self._workdir, "skills")
+            skills_dir = os.path.join(self.workdir, "skills")
             os.makedirs(skills_dir, exist_ok=True)
 
             result = await self._validate_and_hash_skill(skill_path)
@@ -585,7 +571,7 @@ class LocalWorkspace(WorkspaceBase):
                 front matter.
         """
         async with self._skill_lock:
-            skills_dir = os.path.join(self._workdir, "skills")
+            skills_dir = os.path.join(self.workdir, "skills")
 
             if not await aiofiles.ospath.isdir(skills_dir):
                 logger.warning(
@@ -616,17 +602,17 @@ class LocalWorkspace(WorkspaceBase):
 
     async def _seed_initial_skills(self) -> None:
         """Seed skills from ``skill_paths`` on first use."""
-        if not self._skill_paths:
+        if not self.skill_paths:
             return
 
         async with self._skill_lock:
-            skills_dir = os.path.join(self._workdir, "skills")
+            skills_dir = os.path.join(self.workdir, "skills")
             os.makedirs(skills_dir, exist_ok=True)
 
             existing_hashes = await self._collect_existing_hashes(skills_dir)
             existing_dir_names = await self._list_skill_dirs(skills_dir)
 
-            for skill_path in self._skill_paths:
+            for skill_path in self.skill_paths:
                 result = await self._validate_and_hash_skill(skill_path)
                 if result is None:
                     continue
@@ -843,7 +829,7 @@ class LocalWorkspace(WorkspaceBase):
             )
             or ".bin"
         )
-        path = os.path.join(self._workdir, "data", f"{h}{ext}")
+        path = os.path.join(self.workdir, "data", f"{h}{ext}")
         if not await aiofiles.ospath.exists(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             async with aiofiles.open(path, "wb") as f:

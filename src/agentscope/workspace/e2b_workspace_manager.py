@@ -173,14 +173,19 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             gateway_port=self._gateway_port,
         )
         ws._sandbox = sandbox
-        ws._id = state.payload.get("workspace_id", ws._id)
+        ws_id = state.payload.get("workspace_id")
+        if ws_id:
+            ws.workspace_id = ws_id
 
-        if ws._mcp_servers:
+        if ws.mcp_servers:
             await ws._start_gateway()
 
         ws._started = True
         self._workspaces[ws.workspace_id] = ws
-        logger.info("E2BWorkspaceManager: restored workspace %s", ws._id)
+        logger.info(
+            "E2BWorkspaceManager: restored workspace %s",
+            ws.workspace_id,
+        )
         return ws
 
     async def _create_for_pool(self) -> WorkspaceBase:

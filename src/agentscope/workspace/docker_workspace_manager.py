@@ -121,8 +121,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
 
         Reconnects to an existing container by its container_id.
         """
-        import docker
-        import docker.errors as docker_errors
+        import aiodocker
 
         container_id = state.payload.get("container_id")
         if not container_id:
@@ -157,38 +156,39 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             gateway_port=gw_port,
         )
 
-        client = docker.from_env()
+        client = aiodocker.Docker()
         try:
-            container = client.containers.get(container_id)
-        except docker_errors.NotFound as e:
-            client.close()
+            container = await client.containers.get(container_id)
+        except aiodocker.exceptions.DockerError as e:
+            await client.close()
             raise ValueError(
                 f"Container {container_id} not found",
             ) from e
 
-        if container.status != "running":
-            container.start()
+        info = await container.show()
+        if not info.get("State", {}).get("Running", False):
+            await container.start()
 
         ws._client = client
         ws._container = container
-        ws._id = ws_id or ws._id
+        if ws_id:
+            ws.workspace_id = ws_id
 
-        container.reload()
-        attrs = getattr(container, "attrs", {}) or {}
-        ports_info = attrs.get("NetworkSettings", {}).get("Ports", {})
+        info = await container.show()
+        ports_info = info.get("NetworkSettings", {}).get("Ports", {})
         if gw_port:
             bindings = ports_info.get(f"{gw_port}/tcp", [])
             if bindings:
                 ws._port_mapping[gw_port] = int(bindings[0]["HostPort"])
 
-        if ws._mcp_servers:
+        if ws.mcp_servers:
             await ws._start_gateway()
 
         ws._started = True
         self._workspaces[ws.workspace_id] = ws
         logger.info(
             "DockerWorkspaceManager: restored workspace %s",
-            ws._id,
+            ws.workspace_id,
         )
         return ws
 
