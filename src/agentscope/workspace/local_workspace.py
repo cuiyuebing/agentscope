@@ -112,6 +112,24 @@ _DEFAULT_INSTRUCTIONS = (  # noqa: E501
 class LocalWorkspace(WorkspaceBase):
     """Workspace backed by a local directory on the host filesystem.
 
+    The agent operates directly on a host directory.  MCP clients
+    run on the host as well.  Skills are plain subdirectories.
+
+    Args:
+        workdir: Absolute path to the workspace root directory.
+            Will be normalized to an absolute path during
+            construction.
+        instructions: Workspace-specific system prompt fragment
+            returned by :meth:`get_instructions`.  May contain
+            a ``{workdir}`` placeholder that is filled at runtime.
+        skill_paths: List of local directory paths containing
+            skills to seed on first initialization.  These are
+            copied into ``{workdir}/skills/`` if not already
+            present.  Excluded from serialisation.
+        default_mcps: List of :class:`MCPClient` instances to use
+            when no persisted ``.mcp`` file exists yet.  Excluded
+            from serialisation.
+
     Layout::
 
         {workdir}/

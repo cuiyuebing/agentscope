@@ -47,6 +47,36 @@ and processes.
 class E2BWorkspace(WorkspaceWithMCP):
     """Workspace backed by an E2B cloud sandbox.
 
+    Similar to :class:`DockerWorkspace` but uses the E2B SDK
+    (``e2b.AsyncSandbox``) as the compute backend.  The MCP gateway
+    runs inside the sandbox and is accessed over HTTPS via E2B's
+    proxy.
+
+    Args:
+        template: E2B sandbox template identifier.
+            Defaults to ``"base"``.
+        api_key: E2B API key for authentication.  If empty, the
+            SDK falls back to the ``E2B_API_KEY`` environment
+            variable.
+        domain: Optional custom E2B domain.
+        timeout_seconds: Sandbox keep-alive timeout in seconds.
+            Defaults to ``300``.
+        working_dir: Working directory inside the sandbox.
+            Defaults to ``"/home/user"``.
+        env: Environment variables to set inside the sandbox
+            as ``{key: value}``.
+        metadata: Arbitrary metadata attached to the sandbox
+            instance as ``{key: value}``.
+        startup_commands: Shell commands to run inside the sandbox
+            after creation (before the MCP gateway starts).  A
+            non-zero exit code from any command aborts initialization.
+        instructions: Workspace-specific system prompt fragment
+            returned by :meth:`get_instructions`.
+        mcp_servers: MCP server configurations (inherited from
+            :class:`WorkspaceWithMCP`).
+        gateway_port: MCP gateway port (inherited from
+            :class:`WorkspaceWithMCP`).  Defaults to ``5600``.
+
     Usage::
 
         workspace = E2BWorkspace(

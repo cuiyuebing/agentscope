@@ -193,9 +193,17 @@ class _RestGatewayClient(MCPClient):
 class WorkspaceWithMCP(WorkspaceBase):
     """Intermediate base for MCP-enhanced workspaces.
 
-    Serializable configuration:
-    - ``mcp_servers``: list of MCP server configs
-    - ``gateway_port``: port the in-workspace gateway listens on
+    Adds in-workspace MCP gateway management on top of
+    :class:`WorkspaceBase`.  Subclasses (``DockerWorkspace``,
+    ``E2BWorkspace``) inherit MCP operations (``list_mcps``,
+    ``add_mcp``, ``remove_mcp``) without reimplementing them.
+
+    Args:
+        mcp_servers: List of :class:`MCPServerConfig` describing
+            the MCP servers to start inside the workspace gateway.
+            Defaults to an empty list (no MCP servers).
+        gateway_port: TCP port the in-workspace MCP gateway listens
+            on.  Defaults to ``5600``.
     """
 
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)

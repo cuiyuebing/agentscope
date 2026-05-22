@@ -78,6 +78,31 @@ class InternalEndpoint:
 class DockerWorkspace(WorkspaceWithMCP):
     """Workspace backed by a Docker container.
 
+    All operations (exec, file I/O, skill management) are performed
+    inside the container via **aiodocker**.  MCP servers run inside
+    the container and are accessed through an HTTP gateway.
+
+    Args:
+        image: Docker image to use for the container.
+            Defaults to ``"ubuntu:22.04"``.
+        working_dir: Working directory inside the container.
+            Defaults to ``"/workspace"``.
+        exposed_ports: Additional container ports to expose to the
+            host (the gateway port is always included).
+        volumes: Host-to-container volume bindings as
+            ``{host_path: container_path}``.
+        env: Environment variables to set inside the container
+            as ``{key: value}``.
+        startup_commands: Shell commands to run inside the container
+            after creation (before the MCP gateway starts).  A
+            non-zero exit code from any command aborts initialization.
+        instructions: Workspace-specific system prompt fragment
+            returned by :meth:`get_instructions`.
+        mcp_servers: MCP server configurations (inherited from
+            :class:`WorkspaceWithMCP`).
+        gateway_port: MCP gateway port (inherited from
+            :class:`WorkspaceWithMCP`).  Defaults to ``5600``.
+
     Usage::
 
         workspace = DockerWorkspace(image="my-image:latest")
