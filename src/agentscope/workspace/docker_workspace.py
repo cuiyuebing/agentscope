@@ -514,7 +514,14 @@ class DockerWorkspace(WorkspaceWithMCP):
 
         if timeout is None:
             return await _run()
-        return await asyncio.wait_for(_run(), timeout=timeout)
+        try:
+            return await asyncio.wait_for(_run(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return ExecutionResult(
+                exit_code=-1,
+                stdout=b"",
+                stderr=b"timed out",
+            )
 
     async def _read(self, path: str) -> bytes:
         """Read a file from the container, returning raw bytes.

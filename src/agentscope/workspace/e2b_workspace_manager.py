@@ -28,7 +28,7 @@ Pool usage (RL rollout)::
 from typing import Any
 
 from .._logging import logger
-from .config import MCPServerConfig
+from ..mcp import MCPClient
 from .e2b_workspace import E2BWorkspace
 from .types import SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
@@ -45,7 +45,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         domain: str = "",
         timeout_seconds: int = E2BWorkspace.DEFAULT_TIMEOUT,
         working_dir: str = E2BWorkspace.DEFAULT_WORKING_DIR,
-        default_mcp_servers: list[MCPServerConfig] | None = None,
+        default_mcp_servers: list[MCPClient] | None = None,
         gateway_port: int = E2BWorkspace.GATEWAY_PORT,
         default_env: dict[str, str] | None = None,
         default_metadata: dict[str, str] | None = None,
@@ -59,7 +59,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             domain: Optional E2B API domain override.
             timeout_seconds: Default sandbox auto-shutdown timeout.
             working_dir: Default working directory inside sandboxes.
-            default_mcp_servers: MCP servers configured in every
+            default_mcp_servers: MCP clients configured in every
                 new workspace.
             gateway_port: Default gateway port for new workspaces.
             default_env: Environment variables set in every new

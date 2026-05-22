@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from ..message import Msg, ToolResultBlock
     from ..skill import Skill
     from ..tool import ToolBase
-    from .config import MCPServerConfig
     from .types import ExecutionResult
 
 
@@ -179,12 +178,12 @@ class WorkspaceBase(BaseModel):
     # ── for User: dynamic MCP management ───────────────────────────
 
     @abstractmethod
-    async def add_mcp(self, config: "MCPServerConfig") -> None:
+    async def add_mcp(self, mcp_client: "MCPClient") -> None:
         """Dynamically register a new MCP server.
 
         Args:
-            config: Configuration describing the MCP server to
-                add (name, protocol, command/url, etc.).
+            mcp_client: An :class:`MCPClient` instance describing
+                the MCP server to add.
         """
 
     @abstractmethod

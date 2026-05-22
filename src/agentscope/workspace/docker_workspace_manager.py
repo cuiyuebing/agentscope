@@ -26,7 +26,8 @@ Pool usage (RL rollout)::
 from typing import Any
 
 from .._logging import logger
-from .config import MCPServerConfig
+from ..mcp import MCPClient
+from ..mcp._config import HttpMCPConfig, StdioMCPConfig
 from .docker_workspace import DockerWorkspace
 from .types import SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
@@ -40,7 +41,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self,
         image: str = DockerWorkspace.DEFAULT_IMAGE,
         working_dir: str = DockerWorkspace.DEFAULT_WORKING_DIR,
-        default_mcp_servers: list[MCPServerConfig] | None = None,
+        default_mcp_servers: list[MCPClient] | None = None,
         gateway_port: int = DockerWorkspace.GATEWAY_PORT,
         default_env: dict[str, str] | None = None,
         default_startup_commands: list[str] | None = None,
@@ -50,7 +51,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         Args:
             image: Default Docker image for new workspaces.
             working_dir: Default working directory inside containers.
-            default_mcp_servers: MCP servers configured in every
+            default_mcp_servers: MCP clients configured in every
                 new workspace.
             gateway_port: Default gateway port for new workspaces.
             default_env: Environment variables set in every new
@@ -137,15 +138,20 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         image = state.payload.get("image", self._image)
         gw_port = state.payload.get("gateway_port", self._gateway_port)
 
-        mcp_cfgs = []
+        mcp_cfgs: list[MCPClient] = []
         for s in state.payload.get("mcp_servers", []):
-            mcp_cfgs.append(
-                MCPServerConfig(
-                    name=s["name"],
-                    protocol=s.get("transport", "stdio"),
+            if s.get("transport") == "http":
+                cfg = HttpMCPConfig(url=s.get("url", ""))
+            else:
+                cfg = StdioMCPConfig(
                     command=s.get("command", ""),
-                    args=s.get("args", []),
-                    url=s.get("url", ""),
+                    args=s.get("args") or None,
+                )
+            mcp_cfgs.append(
+                MCPClient(
+                    name=s["name"],
+                    is_stateful=True,
+                    mcp_config=cfg,
                 ),
             )
 

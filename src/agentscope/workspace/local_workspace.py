@@ -56,7 +56,6 @@ from ..tool import (
     ToolBase,
     Write,
 )
-from .config import MCPServerConfig
 from .types import ExecutionResult, SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
 
@@ -235,9 +234,10 @@ class LocalWorkspace(WorkspaceBase):
 
         Args:
             command: Shell command string to execute.
-            timeout: Maximum seconds to wait. ``None`` means
-                no limit.
+            timeout: Maximum seconds to wait (covers both process
+                creation and execution). ``None`` means no limit.
         """
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.wait_for(
                 asyncio.create_subprocess_shell(
@@ -253,6 +253,12 @@ class LocalWorkspace(WorkspaceBase):
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
             return ExecutionResult(
                 exit_code=-1,
                 stdout=b"",
@@ -305,46 +311,27 @@ class LocalWorkspace(WorkspaceBase):
                 e,
             )
 
-    async def add_mcp(self, config: MCPServerConfig) -> None:
-        """Add an MCP server from config, connect, and persist.
+    async def add_mcp(self, mcp_client: MCPClient) -> None:
+        """Add an MCP client, connect if stateful, and persist.
 
         Args:
-            config: MCP server configuration to add.
+            mcp_client: An :class:`MCPClient` instance to add.
 
         Raises:
             ValueError: If an MCP with the same name already exists.
         """
-        from ..mcp import HttpMCPConfig, StdioMCPConfig
-
         for existing in self._mcps:
-            if existing.name == config.name:
+            if existing.name == mcp_client.name:
                 raise ValueError(
-                    f"MCP {config.name!r} already exists. "
+                    f"MCP {mcp_client.name!r} already exists. "
                     "Remove it first or use a different name.",
                 )
 
-        if config.protocol == "http":
-            mcp_cfg = HttpMCPConfig(
-                url=config.url,
-                headers=config.headers or None,
-                timeout=config.timeout,
-            )
-        else:
-            mcp_cfg = StdioMCPConfig(
-                command=config.command,
-                args=config.args or None,
-                env=config.env or None,
-            )
-
-        client = MCPClient(
-            name=config.name,
-            is_stateful=True,
-            mcp_config=mcp_cfg,
-        )
-        await client.connect()
-        self._mcps.append(client)
+        if mcp_client.is_stateful and not mcp_client.is_connected:
+            await mcp_client.connect()
+        self._mcps.append(mcp_client)
         await self._save_mcp_file()
-        logger.info("LocalWorkspace: added MCP %r", config.name)
+        logger.info("LocalWorkspace: added MCP %r", mcp_client.name)
 
     async def remove_mcp(self, name: str) -> None:
         """Remove an MCP client by name, disconnect, and persist.

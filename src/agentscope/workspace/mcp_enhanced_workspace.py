@@ -19,7 +19,7 @@ import asyncio
 import json
 import uuid
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 import mcp.types as _mcp_types
@@ -32,12 +32,7 @@ from ..message import TextBlock, ToolResultState
 from ..permission import PermissionBehavior, PermissionDecision
 from ..tool._base import ToolBase
 from ..tool._response import ToolChunk
-from .config import MCPServerConfig
 from .workspace_base import WorkspaceBase
-
-if TYPE_CHECKING:
-    pass
-
 
 # ── REST-backed ToolBase / MCPClient implementations ─────────────
 
@@ -199,14 +194,14 @@ class WorkspaceWithMCP(WorkspaceBase):
     ``add_mcp``, ``remove_mcp``) without reimplementing them.
 
     Args:
-        mcp_servers: List of :class:`MCPServerConfig` describing
+        mcp_servers: List of :class:`MCPClient` instances describing
             the MCP servers to start inside the workspace gateway.
             Defaults to an empty list (no MCP servers).
         gateway_port: TCP port the in-workspace MCP gateway listens
             on.  Defaults to ``5600``.
     """
 
-    mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
+    mcp_servers: list[MCPClient] = Field(default_factory=list)
     gateway_port: int = Field(default=5600)
 
     # Runtime state (excluded from serialisation)
@@ -247,27 +242,27 @@ class WorkspaceWithMCP(WorkspaceBase):
             return [self._gateway_mcp_client]
         return []
 
-    async def add_mcp(self, config: "MCPServerConfig") -> None:
+    async def add_mcp(self, mcp_client: MCPClient) -> None:
         """Register a new MCP server via the gateway admin API.
 
         Args:
-            config: MCP server configuration to add.
+            mcp_client: An :class:`MCPClient` instance to add.
         """
         if not self._gateway_base_url:
             raise RuntimeError(
                 "Gateway not started. Either configure mcp_servers in "
                 "the constructor or initialize the workspace first.",
             )
-        body: dict[str, Any] = {"name": config.name}
-        if config.protocol == "http":
+        body: dict[str, Any] = {"name": mcp_client.name}
+        if isinstance(mcp_client.mcp_config, HttpMCPConfig):
             body["transport"] = "http"
-            body["url"] = config.url
+            body["url"] = mcp_client.mcp_config.url
         else:
             body["transport"] = "stdio"
-            body["command"] = config.command
-            body["args"] = list(config.args or [])
-            if config.env:
-                body["env"] = dict(config.env)
+            body["command"] = mcp_client.mcp_config.command
+            body["args"] = list(mcp_client.mcp_config.args or [])
+            if mcp_client.mcp_config.env:
+                body["env"] = dict(mcp_client.mcp_config.env)
 
         headers: dict[str, str] = {**self._platform_headers()}
         if self._gateway_token:
@@ -291,7 +286,7 @@ class WorkspaceWithMCP(WorkspaceBase):
         logger.info(
             "%s: added MCP %r",
             type(self).__name__,
-            config.name,
+            mcp_client.name,
         )
 
     async def remove_mcp(self, name: str) -> None:
@@ -401,15 +396,15 @@ class WorkspaceWithMCP(WorkspaceBase):
         servers = []
         for s in self.mcp_servers:
             entry: dict[str, Any] = {"name": s.name}
-            if s.protocol == "http":
+            if isinstance(s.mcp_config, HttpMCPConfig):
                 entry["transport"] = "http"
-                entry["url"] = s.url
+                entry["url"] = s.mcp_config.url
             else:
                 entry["transport"] = "stdio"
-                entry["command"] = s.command
-                entry["args"] = list(s.args or [])
-                if s.env:
-                    entry["env"] = dict(s.env)
+                entry["command"] = s.mcp_config.command
+                entry["args"] = list(s.mcp_config.args or [])
+                if s.mcp_config.env:
+                    entry["env"] = dict(s.mcp_config.env)
             servers.append(entry)
         return {"token": self._gateway_token, "servers": servers}
 
