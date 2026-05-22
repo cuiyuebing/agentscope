@@ -182,6 +182,9 @@ class LocalWorkspace(WorkspaceBase):
         ``default_mcps`` are used.  ``skill_paths`` are seeded on first
         use.
         """
+        if self._started:
+            return
+        self._started = True
         mcp_file = os.path.join(self.workdir, ".mcp")
         if await aiofiles.ospath.exists(mcp_file):
             async with aiofiles.open(
@@ -223,6 +226,7 @@ class LocalWorkspace(WorkspaceBase):
                 mcp.is_stateful or mcp.mcp_config.type == "stdio_mcp"
             ) and mcp.is_connected:
                 await mcp.close()
+        self._started = False
 
     async def _exec(
         self,
