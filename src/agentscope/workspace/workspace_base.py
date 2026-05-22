@@ -184,6 +184,9 @@ class WorkspaceBase(BaseModel):
         Args:
             mcp_client: An :class:`MCPClient` instance describing
                 the MCP server to add.
+
+        Raises:
+            ValueError: If an MCP with the same name already exists.
         """
 
     @abstractmethod
@@ -215,4 +218,7 @@ class WorkspaceBase(BaseModel):
         Args:
             name: The ``name`` field from the skill's
                 ``SKILL.md`` front matter.
+
+        Raises:
+            KeyError: If the skill is not found in the workspace.
         """

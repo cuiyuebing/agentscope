@@ -247,6 +247,11 @@ class WorkspaceWithMCP(WorkspaceBase):
 
         Args:
             mcp_client: An :class:`MCPClient` instance to add.
+
+        Raises:
+            ValueError: If an MCP with the same name already exists.
+            RuntimeError: If the gateway is not started or the request
+                fails for other reasons.
         """
         if not self._gateway_base_url:
             raise RuntimeError(
@@ -275,6 +280,11 @@ class WorkspaceWithMCP(WorkspaceBase):
                 headers=headers,
                 timeout=30.0,
             )
+            if resp.status_code == 409:
+                raise ValueError(
+                    f"MCP {mcp_client.name!r} already exists. "
+                    "Remove it first or use a different name.",
+                )
             if resp.status_code >= 400:
                 raise RuntimeError(
                     f"add_mcp failed ({resp.status_code}): {resp.text}",

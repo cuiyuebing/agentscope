@@ -578,16 +578,18 @@ class LocalWorkspace(WorkspaceBase):
         Args:
             name: The ``name`` field from the skill's ``SKILL.md``
                 front matter.
+
+        Raises:
+            KeyError: If the skill is not found in the workspace.
         """
         async with self._skill_lock:
             skills_dir = os.path.join(self.workdir, "skills")
 
             if not await aiofiles.ospath.isdir(skills_dir):
-                logger.warning(
-                    "Skills directory does not exist; cannot remove skill %r",
-                    name,
+                available: list[str] = []
+                raise KeyError(
+                    f"Skill {name!r} not found. Available: {available}",
                 )
-                return
 
             skills = await self.list_skills()
             target_dir: str | None = None
@@ -597,11 +599,10 @@ class LocalWorkspace(WorkspaceBase):
                     break
 
             if target_dir is None:
-                logger.warning(
-                    "Skill %r not found in workspace",
-                    name,
+                available = [s.name for s in skills]
+                raise KeyError(
+                    f"Skill {name!r} not found. Available: {available}",
                 )
-                return
 
             if await aiofiles.ospath.isdir(target_dir):
                 await asyncio.to_thread(shutil.rmtree, target_dir)
