@@ -153,29 +153,12 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             if workspace_id in self._workspaces:
                 return self._workspaces[workspace_id]
 
-        ws = await self.create_workspace(
+        return await self.create_workspace(
             user_id,
             agent_id,
             session_id,
             **kwargs,
         )
-        # Restore the original workspace_id so the caller's
-        # persisted ID remains valid.
-        ws.workspace_id = workspace_id
-        # Re-key the tracking dicts under the correct ID.
-        async with self._lock:
-            # Remove the auto-generated key from cache and tracking.
-            for auto_id in list(self._cache):
-                if self._cache[auto_id][0] is ws:
-                    self._cache.pop(auto_id)
-                    break
-            for auto_id in list(self._workspaces):
-                if self._workspaces[auto_id] is ws:
-                    self._workspaces.pop(auto_id)
-                    break
-            self._cache[workspace_id] = (ws, time.monotonic())
-            self._workspaces[workspace_id] = ws
-        return ws
 
     async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace."""
