@@ -16,9 +16,8 @@ ID-keyed TTL cache with a pre-warming **pool** (see
   is recycled; a background health-check loop probes idle instances.
 * **Reset**: gateway restart + workspace file cleanup + env-var wipe.
 * **Cost control**: idle (POOLED) sandboxes are paused via
-  ``sandbox.pause()`` so E2B billing stops.  On checkout the sandbox
-  is resumed via ``AsyncSandbox.connect(sandbox_id=...)`` which
-  auto-resumes paused sandboxes.
+  ``E2BWorkspace.pause()`` so E2B billing stops.  On checkout the
+  sandbox is resumed via ``E2BWorkspace.resume()``.
 
 The public API (``get_workspace`` / ``create_workspace`` / ``close`` /
 ``close_all``) matches :class:`WorkspaceManagerBase` so callers —
@@ -29,10 +28,8 @@ backend.
 from __future__ import annotations
 
 import asyncio
-import json
-import shlex
 import uuid
-from typing import Any, Self
+from typing import Self
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -41,18 +38,7 @@ from ...workspace._e2b._bootstrap import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
-    GATEWAY_CONFIG,
-    GATEWAY_HOME,
-    GATEWAY_LOG,
-    GATEWAY_SCRIPT,
-    GATEWAY_VENV_PY,
-    SANDBOX_DATA_DIR,
-    SANDBOX_MCP_FILE,
-    SANDBOX_SESSIONS_DIR,
-    SANDBOX_SKILLS_DIR,
-    SANDBOX_WORKDIR,
 )
-from ...workspace._gateway_client import GatewayClient
 from ._workspace_manager import WorkspaceManagerBase
 from ._workspace_pool import PooledEntry, WorkspacePool
 
@@ -92,11 +78,11 @@ class RLWorkspaceManager(WorkspaceManagerBase):
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         # ── pooling parameters ─────────────────────────────────
-        min_idle: int = 10,
-        max_idle: int = 30,
-        total: int = 100,
-        create_batch_size: int = 10,
-        max_reuse: int = 10,
+        min_idle: int = 1,
+        max_idle: int = 3,
+        total: int = 10,
+        create_batch_size: int = 2,
+        max_reuse: int = 50,
         health_check_interval: float = DEFAULT_HEALTH_CHECK_INTERVAL,
     ) -> None:
         """Initialize the RL workspace manager.
@@ -176,7 +162,7 @@ class RLWorkspaceManager(WorkspaceManagerBase):
             health_check_interval=health_check_interval,
         )
 
-    # ── factory: create a fresh E2BWorkspace ───────────────────────
+    # ── pool callbacks ─────────────────────────────────────────────
 
     async def _factory(self) -> E2BWorkspace:
         """Create and initialize a new E2BWorkspace for the pool.
@@ -206,272 +192,43 @@ class RLWorkspaceManager(WorkspaceManagerBase):
         )
         return ws
 
-    # ── pause / resume ─────────────────────────────────────────────
-
-    async def _pause_workspace(self, ws: E2BWorkspace) -> None:
-        """Pause the sandbox so E2B stops billing.
-
-        Closes the host-side gateway HTTP client (its connection pool
-        points at a host:port that will not be routable once the
-        sandbox is paused) and calls ``sandbox.pause()``. The sandbox
-        filesystem is preserved; ``_resume_workspace`` will reconnect.
-        """
-        # Close the gateway client — it holds connections to a host
-        # that will become unreachable once paused.
-        if ws._gateway is not None:
-            try:
-                await ws._gateway.aclose()
-            except Exception:
-                pass
-            ws._gateway = None
-        ws._gateway_clients.clear()
-
-        if ws._sandbox is not None:
-            await ws._sandbox.pause()
-            # Keep the _sandbox reference — we need sandbox_id for resume.
-            # But mark workspace as not alive.
-        ws.is_alive = False
-
-        logger.debug(
-            "RLWorkspaceManager: paused workspace %s (sandbox %s)",
-            ws.workspace_id,
-            ws.sandbox_id,
-        )
-
-    async def _resume_workspace(self, ws: E2BWorkspace) -> None:
-        """Resume a paused sandbox and bring the gateway back up.
-
-        ``AsyncSandbox.connect(sandbox_id=...)`` auto-resumes paused
-        sandboxes.  After envd is routable again we kill any leftover
-        gateway process (the pause may have frozen it mid-request),
-        write a fresh config, and restart it.
-        """
-        from e2b import AsyncSandbox
-
-        sandbox_id = ws.sandbox_id
-        if sandbox_id is None:
-            raise RuntimeError(
-                f"Cannot resume workspace {ws.workspace_id}: "
-                "sandbox_id is None",
-            )
-
-        api_opts: dict[str, Any] = {}
-        if ws.api_key:
-            api_opts["api_key"] = ws.api_key
-        if ws.domain:
-            api_opts["domain"] = ws.domain
-
-        # Reconnect — this auto-resumes a paused sandbox.
-        ws._sandbox = await AsyncSandbox.connect(
-            sandbox_id=sandbox_id,
-            timeout=ws.timeout_seconds,
-            **api_opts,
-        )
-        await ws._wait_until_running()
-
-        # Kill any leftover gateway from before the pause.
-        await ws._exec("pkill -f _mcp_gateway_app.py || true")
-
-        # Mint a fresh bearer token.
-        new_token = uuid.uuid4().hex
-        ws._gateway_token = new_token
-
-        # Write gateway config with the new token.
-        cfg = {
-            "token": new_token,
-            "servers": [m.model_dump(mode="json") for m in ws._mcps],
-        }
-        await ws._exec(f"mkdir -p {shlex.quote(GATEWAY_HOME)}")
-        await ws._sandbox.files.write(
-            GATEWAY_CONFIG,
-            json.dumps(cfg, indent=2, ensure_ascii=False).encode("utf-8"),
-        )
-
-        # Start the gateway process.
-        cmd = (
-            f"nohup {shlex.quote(GATEWAY_VENV_PY)} -u "
-            f"{shlex.quote(GATEWAY_SCRIPT)} "
-            f"--config {shlex.quote(GATEWAY_CONFIG)} "
-            f"--port {ws.gateway_port} "
-            f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
-        )
-        await ws._exec(cmd)
-
-        # Build a fresh gateway client.
-        host = ws._sandbox.get_host(ws.gateway_port)
-        extra_headers: dict[str, str] = {}
-        access_token = getattr(ws._sandbox, "traffic_access_token", None)
-        if access_token:
-            extra_headers["X-Access-Token"] = access_token
-
-        ws._gateway = GatewayClient(
-            base_url=f"https://{host}",
-            token=new_token,
-            timeout=30.0,
-            extra_headers=extra_headers,
-        )
-
-        # Wait for gateway readiness.
-        await self._wait_for_gateway(ws, timeout=30.0)
-
-        # Refresh the gateway MCP view.
-        ws._gateway_clients = {
-            c.name: c for c in await ws._gateway.list_mcps()
-        }
-
-        ws.is_alive = True
-
-        logger.debug(
-            "RLWorkspaceManager: resumed workspace %s (sandbox %s)",
-            ws.workspace_id,
-            ws.sandbox_id,
-        )
-
-    # ── reset: thorough cleanup for sandbox reuse ──────────────────
-
     async def _reset_workspace(self, ws: E2BWorkspace) -> None:
         """Reset an E2BWorkspace to a clean state for reuse.
 
-        Called while the sandbox is still *running* (before pause).
-        Per the Pooling Design spec, this performs:
-
-        1. Kill the gateway process.
-        2. Delete workspace files (sessions, data, skills, .mcp).
-        3. Clear all user-set environment variables.
-        4. Restart the gateway with a fresh token and config.
+        Delegates to :meth:`E2BWorkspace.reset_for_pool` which
+        performs a full gateway restart and data wipe while the
+        sandbox is still running.
         """
-        if ws._sandbox is None:
-            raise RuntimeError("Cannot reset: sandbox is None")
-
-        # 1. Kill gateway process
-        await ws._exec("pkill -f _mcp_gateway_app.py || true")
-
-        # 2. Wipe workspace directories and .mcp file
-        paths_to_remove = [
-            SANDBOX_SESSIONS_DIR,
-            SANDBOX_DATA_DIR,
-            SANDBOX_SKILLS_DIR,
-            SANDBOX_MCP_FILE,
-        ]
-        await ws._exec(
-            "rm -rf " + " ".join(shlex.quote(p) for p in paths_to_remove),
+        await ws.reset_for_pool(
+            default_mcps=self._default_mcps or None,
+            skill_paths=self._skill_paths or None,
         )
 
-        # 3. Recreate clean directory structure
-        await ws._exec(
-            f"mkdir -p {SANDBOX_DATA_DIR} {SANDBOX_SKILLS_DIR} "
-            f"{SANDBOX_SESSIONS_DIR}",
-        )
-
-        # 4. Clear internal MCP state
-        ws._mcps = []
-        ws._gateway_clients.clear()
-
-        # 5. Write empty .mcp file
-        await ws._exec(f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}")
-        await ws._sandbox.files.write(
-            SANDBOX_MCP_FILE,
-            b"[]",
-        )
-
-        # 6. Restart gateway with fresh token
-        new_token = uuid.uuid4().hex
-        ws._gateway_token = new_token
-
-        cfg = {
-            "token": new_token,
-            "servers": [],  # clean state, no MCPs
-        }
-        await ws._exec(f"mkdir -p {shlex.quote(GATEWAY_HOME)}")
-        await ws._sandbox.files.write(
-            GATEWAY_CONFIG,
-            json.dumps(cfg, indent=2, ensure_ascii=False).encode("utf-8"),
-        )
-
-        # Start gateway process
-        cmd = (
-            f"nohup {shlex.quote(GATEWAY_VENV_PY)} -u "
-            f"{shlex.quote(GATEWAY_SCRIPT)} "
-            f"--config {shlex.quote(GATEWAY_CONFIG)} "
-            f"--port {ws.gateway_port} "
-            f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
-        )
-        await ws._exec(cmd)
-
-        # 7. Rebuild gateway client with new token
-        if ws._gateway is not None:
-            try:
-                await ws._gateway.aclose()
-            except Exception:
-                pass
-
-        host = ws._sandbox.get_host(ws.gateway_port)
-        extra_headers: dict[str, str] = {}
-        access_token = getattr(ws._sandbox, "traffic_access_token", None)
-        if access_token:
-            extra_headers["X-Access-Token"] = access_token
-
-        ws._gateway = GatewayClient(
-            base_url=f"https://{host}",
-            token=new_token,
-            timeout=30.0,
-            extra_headers=extra_headers,
-        )
-
-        # 8. Wait for gateway to be healthy
-        await self._wait_for_gateway(ws, timeout=30.0)
-
-        # 9. Re-seed default MCPs and skills if configured
-        if self._default_mcps:
-            ws._mcps = list(self._default_mcps)
-            await ws._save_mcp_file()
-            ws._gateway_clients = {
-                c.name: c for c in await ws._gateway.list_mcps()
-            }
-
-        if self._skill_paths:
-            await ws._exec(f"mkdir -p {SANDBOX_SKILLS_DIR}")
-            for path in self._skill_paths:
-                try:
-                    await ws.add_skill(path)
-                except Exception as e:
-                    logger.warning(
-                        "RLWorkspaceManager: skip skill %r during reset: %s",
-                        path,
-                        e,
-                    )
-
-        logger.info(
-            "RLWorkspaceManager: reset workspace %s",
-            ws.workspace_id,
-        )
-
-    # ── health check ───────────────────────────────────────────────
-
-    async def _health_check(self, ws: E2BWorkspace) -> bool:
+    @staticmethod
+    async def _health_check(ws: E2BWorkspace) -> bool:
         """Check if a workspace is healthy by probing the gateway.
 
         Called while the workspace is in a *running* state (after
         resume, or before pause during release).
         """
-        if ws._gateway is None:
-            return False
-        try:
-            return await ws._gateway.health()
-        except Exception:
-            return False
+        return await ws.gateway_health()
 
-    # ── close workspace ────────────────────────────────────────────
+    @staticmethod
+    async def _pause_workspace(ws: E2BWorkspace) -> None:
+        """Pause the sandbox so E2B stops billing."""
+        await ws.pause()
+
+    @staticmethod
+    async def _resume_workspace(ws: E2BWorkspace) -> None:
+        """Resume a paused sandbox and bring the gateway back up."""
+        await ws.resume()
 
     @staticmethod
     async def _close_workspace(ws: E2BWorkspace) -> None:
-        """Permanently close/pause an E2BWorkspace.
+        """Permanently close an E2BWorkspace.
 
-        Used by the pool's ``close_fn`` to destroy instances that are
-        evicted (unhealthy, max_reuse, or pool shutdown). Works
-        regardless of whether the sandbox is currently running or
-        paused — ``E2BWorkspace.close()`` calls ``sandbox.pause()``
-        which is a no-op on an already-paused sandbox.
+        Works regardless of whether the sandbox is currently running
+        or paused.
         """
         try:
             await ws.close()
@@ -480,27 +237,6 @@ class RLWorkspaceManager(WorkspaceManagerBase):
                 "RLWorkspaceManager: failed to close workspace %s",
                 ws.workspace_id,
             )
-
-    # ── gateway health wait helper ─────────────────────────────────
-
-    @staticmethod
-    async def _wait_for_gateway(
-        ws: E2BWorkspace,
-        timeout: float = 30.0,
-    ) -> None:
-        """Block until the workspace's gateway answers /health."""
-        assert ws._gateway is not None
-        deadline = asyncio.get_event_loop().time() + timeout
-        delay = 0.1
-        while asyncio.get_event_loop().time() < deadline:
-            if await ws._gateway.health():
-                return
-            await asyncio.sleep(delay)
-            delay = min(delay * 1.5, 1.0)
-        raise RuntimeError(
-            f"Gateway did not become healthy within {timeout}s "
-            f"for workspace {ws.workspace_id}",
-        )
 
     # ── public API ─────────────────────────────────────────────────
 
@@ -540,14 +276,13 @@ class RLWorkspaceManager(WorkspaceManagerBase):
         ws = entry.workspace
 
         # Update sandbox metadata for this user/agent binding.
-        if ws._sandbox is not None:
-            ws.sandbox_metadata.update(
-                {
-                    "agentscope.user.id": user_id,
-                    "agentscope.agent.id": agent_id,
-                    "agentscope.workspace.id": workspace_id,
-                },
-            )
+        ws.sandbox_metadata.update(
+            {
+                "agentscope.user.id": user_id,
+                "agentscope.agent.id": agent_id,
+                "agentscope.workspace.id": workspace_id,
+            },
+        )
 
         async with self._lock:
             # Double-check: another concurrent call may have bound it.
