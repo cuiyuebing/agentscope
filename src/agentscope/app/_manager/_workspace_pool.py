@@ -5,7 +5,7 @@ scheduling.
 Designed according to the Pooling Design specification:
 
 * **Lifecycle**: CREATING → POOLED → ACTIVE → RESETTING → POOLED / DESTROYED
-* **Scheduling**: ``min_idle`` / ``max_idle`` / ``total`` / ``create_batch_size``
+* **Scheduling**: ``min_idle``/``max_idle``/``total``/``create_batch_size``
   govern pre-warming and capacity.
 * **Maintenance**: Each workspace tracks its reuse count; once
   ``max_reuse`` is reached the instance is destroyed instead of recycled.

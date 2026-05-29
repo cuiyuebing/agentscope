@@ -546,7 +546,7 @@ class RLWorkspaceManager(WorkspaceManagerBase):
                     "agentscope.user.id": user_id,
                     "agentscope.agent.id": agent_id,
                     "agentscope.workspace.id": workspace_id,
-                }
+                },
             )
 
         async with self._lock:
