@@ -191,9 +191,6 @@ class WorkspacePool(Generic[T]):
         if self._maintain_task is not None:
             try:
                 await self._maintain_task
-            except asyncio.CancelledError:
-                # stop() itself was cancelled — do not swallow it.
-                raise
             except Exception:
                 logger.exception(
                     "WorkspacePool: maintain task raised during stop",
@@ -266,7 +263,7 @@ class WorkspacePool(Generic[T]):
             # ── fast path: try to grab an idle entry without blocking ──
             try:
                 entry = self._idle.get_nowait()
-            except asyncio.QueueEmpty:
+            except asyncio.QueueEmpty as queue_empty_exc:
                 # No idle entry available right now.
                 if self.total_managed >= self._total:
                     # Pool is at capacity — fall back to overflow creation
@@ -283,18 +280,19 @@ class WorkspacePool(Generic[T]):
                             f"No workspace available within {timeout}s "
                             f"(total={self._total}, "
                             f"idle={self.idle_count})",
-                        )
+                        ) from queue_empty_exc
+
                 try:
                     entry = await asyncio.wait_for(
                         self._idle.get(),
                         timeout=remaining,
                     )
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError as timeout_exc:
                     raise PoolExhaustedError(
                         f"No workspace available within {timeout}s "
                         f"(total={self._total}, "
                         f"idle={self.idle_count})",
-                    ) from None
+                    ) from timeout_exc
 
             # ── resume + health-check the dequeued entry ───────────
             if self._resume_fn is not None:
