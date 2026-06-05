@@ -13,15 +13,12 @@ Designed according to the Pooling Design specification:
   destroyed.  Each workspace also tracks its reuse count; once
   ``max_reuse`` is reached the instance is destroyed instead of recycled.
   Health checks are performed inline at ``acquire`` and ``release`` time.
-<<<<<<< HEAD
 * **Overflow fallback**: When the pool is at its ``total`` capacity and
   no idle entries are available, ``acquire`` creates an *overflow*
   workspace directly via the factory — bypassing the capacity limit so
   callers are never blocked indefinitely.  On ``release``, overflow
   entries are absorbed into the pool if headroom exists, or destroyed
   outright.
-=======
->>>>>>> 4e631d53 (refactor: remove health check loop and update documentation for workspace pool)
 * **FIFO**: Idle workspaces are handed out in the order they became
   available (via :class:`asyncio.Queue`).
 * **Cost control**: Idle workspaces are kept in a *paused* state via an
