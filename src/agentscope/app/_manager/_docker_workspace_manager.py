@@ -379,7 +379,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         async with self._lock:
             existing = self._active.get(workspace_id)
             if existing is not None:
-                asyncio.create_task(self._pool.release(entry))
+                self._pool.release_background(entry)
                 return existing.workspace
             self._active[workspace_id] = entry
 

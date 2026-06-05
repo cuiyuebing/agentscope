@@ -145,6 +145,8 @@ class WorkspacePool(Generic[T]):
         # Background tasks
         self._maintain_task: asyncio.Task | None = None
         self._stopping = False
+        # In-flight background release tasks (from release_background).
+        self._inflight_releases: set[asyncio.Task[None]] = set()
 
     # ── pool size helpers ───────────────────────────────────────────
 
@@ -196,6 +198,17 @@ class WorkspacePool(Generic[T]):
                     "WorkspacePool: maintain task raised during stop",
                 )
             self._maintain_task = None
+
+        # Wait for any in-flight background releases to finish so
+        # their workspaces are properly reset/destroyed before we
+        # do the final sweep.  Each task's _guarded_release already
+        # force-destroys on failure, so we only need to wait.
+        if self._inflight_releases:
+            await asyncio.gather(
+                *self._inflight_releases,
+                return_exceptions=True,
+            )
+            self._inflight_releases.clear()
 
         # At this point no background task can put new entries into
         # the idle queue.  Drain it first (so a concurrent acquire()
@@ -424,6 +437,55 @@ class WorkspacePool(Generic[T]):
             await self._destroy_entry(entry)
             return
         await self._idle.put(entry)
+
+    def release_background(self, entry: PooledEntry[T]) -> asyncio.Task[None]:
+        """Schedule a :meth:`release` in the background with tracking.
+
+        Unlike a bare ``asyncio.create_task(pool.release(...))``, the
+        created task is tracked in ``_inflight_releases`` so that:
+
+        * :meth:`stop` waits for all in-flight releases before final
+          cleanup — no orphaned workspaces.
+        * If ``release`` fails for any reason, the workspace is
+          force-destroyed via ``close_fn`` as a last-resort safety net.
+        * Exceptions are logged instead of silently swallowed by the
+          event loop's unhandled-task-exception mechanism.
+
+        Returns:
+            The background :class:`asyncio.Task`.
+        """
+        task: asyncio.Task[None] = asyncio.create_task(
+            self._guarded_release(entry),
+        )
+        self._inflight_releases.add(task)
+        task.add_done_callback(self._inflight_releases.discard)
+        return task
+
+    async def _guarded_release(self, entry: PooledEntry[T]) -> None:
+        """Run :meth:`release` with a force-destroy safety net.
+
+        If ``release`` propagates an unexpected exception (i.e. one
+        that was not already handled internally), this wrapper ensures
+        the workspace is still destroyed so it never becomes an orphan
+        that leaks resources (running containers, billed sandboxes).
+        """
+        try:
+            await self.release(entry)
+        except Exception:
+            logger.exception(
+                "WorkspacePool: background release failed, "
+                "force-destroying workspace",
+            )
+            try:
+                entry.state = PooledState.DESTROYED
+                async with self._lock:
+                    self._all.pop(id(entry), None)
+                await self._safe_destroy(entry)
+            except Exception:
+                logger.exception(
+                    "WorkspacePool: force-destroy after failed "
+                    "release also failed",
+                )
 
     # ── pool maintenance ─────────────────────────────────────────────
 
