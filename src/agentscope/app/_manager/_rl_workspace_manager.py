@@ -269,22 +269,23 @@ class RLWorkspaceManager(WorkspaceManagerBase):
         entry = await self._pool.acquire()
         ws = entry.workspace
 
-        # Update sandbox metadata for this user/agent binding.
-        ws.sandbox_metadata.update(
-            {
-                "agentscope.user.id": user_id,
-                "agentscope.agent.id": agent_id,
-                "agentscope.workspace.id": workspace_id,
-            },
-        )
-
         async with self._lock:
             # Double-check: another concurrent call may have bound it.
             existing = self._active.get(workspace_id)
             if existing is not None:
                 # Release this checkout back to pool asynchronously.
-                asyncio.create_task(self._pool.release(entry))
+                self._pool.release_background(entry)
                 return existing.workspace
+            # Update sandbox metadata for this user/agent binding
+            # inside the lock so a concurrent loser never pollutes
+            # an entry that will be returned to the pool.
+            ws.sandbox_metadata.update(
+                {
+                    "agentscope.user.id": user_id,
+                    "agentscope.agent.id": agent_id,
+                    "agentscope.workspace.id": workspace_id,
+                },
+            )
             self._active[workspace_id] = entry
 
         logger.info(

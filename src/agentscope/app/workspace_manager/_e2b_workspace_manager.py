@@ -388,19 +388,18 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         entry = await self._pool.acquire()
         ws = entry.workspace
 
-        ws.sandbox_metadata.update(
-            {
-                "agentscope.user.id": user_id,
-                "agentscope.agent.id": agent_id,
-                "agentscope.workspace.id": workspace_id,
-            },
-        )
-
         async with self._lock:
             existing = self._active.get(workspace_id)
             if existing is not None:
-                asyncio.create_task(self._pool.release(entry))
+                self._pool.release_background(entry)
                 return existing.workspace
+            ws.sandbox_metadata.update(
+                {
+                    "agentscope.user.id": user_id,
+                    "agentscope.agent.id": agent_id,
+                    "agentscope.workspace.id": workspace_id,
+                },
+            )
             self._active[workspace_id] = entry
 
         logger.info(
