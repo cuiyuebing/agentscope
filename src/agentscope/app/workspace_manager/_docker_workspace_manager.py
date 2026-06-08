@@ -38,8 +38,9 @@ from agentscope.workspace._docker._make_dockerfile import (
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
 )
+
 from ._base import WorkspaceManagerBase
-from .._manager._workspace_pool import PooledEntry, WorkspacePool
+from ._workspace_pool import PooledEntry, WorkspacePool
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 

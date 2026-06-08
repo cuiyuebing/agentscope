@@ -45,8 +45,9 @@ from agentscope.workspace._e2b._bootstrap import (
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
 )
+
 from ._base import WorkspaceManagerBase
-from .._manager._workspace_pool import PooledEntry, WorkspacePool
+from ._workspace_pool import PooledEntry, WorkspacePool
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
