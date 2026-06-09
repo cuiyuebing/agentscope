@@ -190,7 +190,7 @@ class TestDockerPoolHostSync(IsolatedAsyncioTestCase):
         # Verify the file is visible inside the container via the
         # workspace's exec mechanism.
         result = await ws._exec("cat /workspace/seed.txt", timeout=5)
-        self.assertIn("hello from host", result)
+        self.assertIn(b"hello from host", result.stdout)
 
         wid = list(self.mgr._active.keys())[0]
         await self.mgr.close(wid)

@@ -47,6 +47,91 @@ from ._workspace_pool import PooledEntry, WorkspacePool
 DEFAULT_SWEEP_INTERVAL = 300.0
 
 
+def _safe_extract_tar(
+    tar_obj: tarfile.TarFile,
+    dest_dir: str,
+) -> int:
+    """Extract *tar_obj* into *dest_dir* with safety filtering.
+
+    The archive produced by ``docker get_archive`` wraps the target
+    directory itself as the first entry (e.g. ``workspace/``).  This
+    function strips that leading prefix so that archive contents land
+    directly inside *dest_dir*.
+
+    Safety guarantees:
+
+    * Symlinks and hardlinks are silently skipped (prevents symlink
+      escape).
+    * Members whose resolved path falls outside *dest_dir* after
+      ``os.path.realpath`` are skipped (prevents path traversal).
+    * Absolute paths and ``..`` components are rejected.
+
+    Args:
+        tar_obj: An open :class:`tarfile.TarFile` to read from.
+            The caller is responsible for closing it afterwards.
+        dest_dir: Absolute host directory to extract into.  Must
+            already exist.
+
+    Returns:
+        Number of members actually extracted.
+    """
+    members = tar_obj.getmembers()
+
+    # Detect the archive-root directory prefix to strip.
+    prefix = ""
+    for m in members:
+        if m.isdir():
+            prefix = m.name.rstrip("/") + "/"
+            break
+
+    real_dest = os.path.realpath(dest_dir) + os.sep
+    extracted = 0
+
+    for member in members:
+        # Skip the root directory entry itself.
+        if member.name.rstrip("/") == prefix.rstrip("/"):
+            continue
+
+        # Strip the prefix so contents land directly in dest_dir.
+        if prefix and member.name.startswith(prefix):
+            member.name = member.name[len(prefix) :]
+        if not member.name:
+            continue
+
+        # Reject absolute paths and parent-directory references.
+        if member.name.startswith("/") or ".." in member.name.split("/"):
+            continue
+
+        # Reject symlinks and hardlinks (symlink escape risk).
+        if member.issym() or member.islnk():
+            logger.warning(
+                "_safe_extract_tar: skipping symlink/hardlink: %s",
+                member.name,
+            )
+            continue
+
+        # Verify the resolved path stays inside dest_dir.
+        resolved = os.path.realpath(os.path.join(dest_dir, member.name))
+        if not resolved.startswith(real_dest):
+            logger.warning(
+                "_safe_extract_tar: skipping path traversal: %s",
+                member.name,
+            )
+            continue
+
+        if member.isfile():
+            tar_obj.extract(member, path=dest_dir)
+            extracted += 1
+        elif member.isdir():
+            os.makedirs(
+                os.path.join(dest_dir, member.name),
+                exist_ok=True,
+            )
+            extracted += 1
+
+    return extracted
+
+
 class DockerWorkspaceManager(WorkspaceManagerBase):
     """Manages :class:`DockerWorkspace` instances with TTL-based caching.
 
@@ -299,39 +384,15 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             return
 
         try:
-            # The archive root is the directory itself (e.g. "workspace/").
-            # Strip this prefix so contents land directly in host_workdir.
-            members = tar_obj.getmembers()
-            prefix = ""
-            for m in members:
-                if m.isdir():
-                    prefix = m.name.rstrip("/") + "/"
-                    break
-
-            for member in members:
-                if member.name.rstrip("/") == prefix.rstrip("/"):
-                    continue
-                if prefix and member.name.startswith(prefix):
-                    member.name = member.name[len(prefix) :]
-                if not member.name:
-                    continue
-                if member.name.startswith("/") or ".." in member.name.split(
-                    "/",
-                ):
-                    continue
-                if member.isfile() or member.issym() or member.islnk():
-                    tar_obj.extract(member, path=host_workdir)
-                elif member.isdir():
-                    os.makedirs(
-                        os.path.join(host_workdir, member.name),
-                        exist_ok=True,
-                    )
+            extracted = _safe_extract_tar(tar_obj, host_workdir)
         finally:
             tar_obj.close()
 
         logger.info(
-            "DockerWorkspaceManager[pool]: synced container -> host %s",
+            "DockerWorkspaceManager[pool]: synced container -> host %s "
+            "(%d entries)",
             host_workdir,
+            extracted,
         )
 
     # ── public API ────────────────────────────────────────────────
@@ -483,9 +544,15 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             except Exception:
                 logger.exception(
                     "DockerWorkspaceManager[pool]: host->container sync "
-                    "failed for workspace_id=%s",
+                    "failed for workspace_id=%s, rolling back",
                     workspace_id,
                 )
+                # Roll back: remove from active tracking and release the
+                # entry back to the pool so it is not leaked.
+                async with self._lock:
+                    self._active.pop(workspace_id, None)
+                self._pool.release_background(entry)
+                raise
 
         logger.info(
             "DockerWorkspaceManager[pool]: checked out %s for workspace_id=%s",
