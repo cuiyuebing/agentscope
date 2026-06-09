@@ -75,10 +75,10 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
         # ── pooling parameters (disabled by default) ──────────
         pool_enabled: bool = False,
-        min_idle: int = 1,
-        max_idle: int = 3,
-        total: int = 10,
-        create_batch_size: int = 2,
+        pool_min_ready: int = 1,
+        pool_max_ready: int = 3,
+        pool_capacity: int = 10,
+        pool_batch_size: int = 2,
     ) -> None:
         """Initialize the docker workspace manager.
 
@@ -122,14 +122,22 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 TTL cache. Each container is used exactly once
                 (``max_reuse=1``) and destroyed on release; the pool
                 background loop creates fresh replacements.
-            min_idle (`int`, defaults to `1`):
-                Pool: minimum idle instances to maintain.
-            max_idle (`int`, defaults to `3`):
-                Pool: target idle count after replenishment.
-            total (`int`, defaults to `10`):
-                Pool: hard cap on total managed instances.
-            create_batch_size (`int`, defaults to `2`):
-                Pool: concurrent factory calls per replenishment.
+            pool_min_ready (`int`, defaults to `1`):
+                Pool: minimum number of ready-to-use instances kept
+                on standby. When the count drops below this threshold,
+                the pool automatically creates new instances in the
+                background.
+            pool_max_ready (`int`, defaults to `3`):
+                Pool: target number of ready-to-use instances after
+                replenishment. The pool will create instances up to
+                this count when triggered.
+            pool_capacity (`int`, defaults to `10`):
+                Pool: maximum total instances managed by the pool
+                (both in-use and standby combined). Requests beyond
+                this limit trigger overflow creation.
+            pool_batch_size (`int`, defaults to `2`):
+                Pool: how many instances to create concurrently per
+                replenishment cycle.
         """
         self._basedir = os.path.abspath(basedir) if basedir else ""
         self._base_image = base_image
@@ -160,10 +168,10 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 close_fn=self._pool_close,
                 pause_fn=self._pool_pause,
                 resume_fn=self._pool_resume,
-                min_idle=min_idle,
-                max_idle=max_idle,
-                total=total,
-                create_batch_size=create_batch_size,
+                pool_min_ready=pool_min_ready,
+                pool_max_ready=pool_max_ready,
+                pool_capacity=pool_capacity,
+                pool_batch_size=pool_batch_size,
                 max_reuse=1,
             )
 

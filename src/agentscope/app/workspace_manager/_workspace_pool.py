@@ -6,17 +6,18 @@ Designed according to the Pooling Design specification:
 * **Lifecycle**: CREATING → POOLED → ACTIVE → RESETTING → POOLED / DESTROYED
   When ``reset_fn`` is ``None``, the RESETTING phase is a no-op and the
   entry proceeds directly to health-check / pause / re-pool.
-* **Scheduling**: ``min_idle``/``max_idle``/``total``/``create_batch_size``
-  govern pre-warming and capacity.
-* **Maintenance**: A unified background ``_maintain_loop`` keeps the idle
-  count within the ``[min_idle, max_idle]`` band.  When idle count drops
-  below ``min_idle``, new instances are created up to ``max_idle``.  When
-  idle count exceeds ``max_idle``, excess instances are drained and
-  destroyed.  Each workspace also tracks its reuse count; once
-  ``max_reuse`` is reached the instance is destroyed instead of recycled.
-  Health checks are performed inline at ``acquire`` and ``release`` time.
-* **Overflow fallback**: When the pool is at its ``total`` capacity and
-  no idle entries are available, ``acquire`` creates an *overflow*
+* **Scheduling**: ``pool_min_ready`` / ``pool_max_ready`` /
+  ``pool_capacity`` / ``pool_batch_size`` govern pre-warming and capacity.
+* **Maintenance**: A unified background ``_maintain_loop`` keeps the
+  ready-to-use (idle) count within the ``[pool_min_ready, pool_max_ready]``
+  band.  When the ready count drops below ``pool_min_ready``, new
+  instances are created up to ``pool_max_ready``.  When the ready count
+  exceeds ``pool_max_ready``, excess instances are drained and destroyed.
+  Each workspace also tracks its reuse count; once ``max_reuse`` is
+  reached the instance is destroyed instead of recycled.  Health checks
+  are performed inline at ``acquire`` and ``release`` time.
+* **Overflow fallback**: When the pool has reached ``pool_capacity`` and
+  no ready entries are available, ``acquire`` creates an *overflow*
   workspace directly via the factory — bypassing the capacity limit so
   callers are never blocked indefinitely.  On ``release``, overflow
   entries are absorbed into the pool if headroom exists, or destroyed
@@ -101,13 +102,18 @@ class WorkspacePool(Generic[T]):
         resume_fn: ``async (T) -> None`` — brings a paused workspace back
             to a running state.  Called when the workspace leaves the
             POOLED state for ACTIVE.  ``None`` means no resume is needed.
-        min_idle: Minimum number of idle instances to maintain. When idle
-            count drops below this, the background replenish loop creates
-            new instances.
-        max_idle: Target idle count after batch replenishment.
-        total: Hard cap on total managed instances (idle + active).
-        create_batch_size: Maximum concurrent ``factory()`` calls per
-            replenishment batch.
+        pool_min_ready: Minimum number of ready-to-use (idle) instances
+            kept on standby.  When the ready count drops below this
+            threshold, the pool automatically creates new instances in
+            the background.
+        pool_max_ready: Target number of ready-to-use instances after
+            replenishment.  The pool will create instances up to this
+            count when triggered by a ``pool_min_ready`` breach.
+        pool_capacity: Maximum total instances managed by the pool
+            (both in-use and standby combined).  Requests beyond this
+            limit trigger overflow creation.
+        pool_batch_size: How many instances to create concurrently per
+            replenishment cycle.
         max_reuse: Maximum times a workspace can be recycled before
             destruction. ``0`` means unlimited.
     """
@@ -121,10 +127,10 @@ class WorkspacePool(Generic[T]):
         close_fn: Callable[[T], Awaitable[None]],
         pause_fn: Callable[[T], Awaitable[None]] | None = None,
         resume_fn: Callable[[T], Awaitable[None]] | None = None,
-        min_idle: int = 1,
-        max_idle: int = 3,
-        total: int = 10,
-        create_batch_size: int = 2,
+        pool_min_ready: int = 1,
+        pool_max_ready: int = 3,
+        pool_capacity: int = 10,
+        pool_batch_size: int = 2,
         max_reuse: int = 0,
     ) -> None:
         self._factory = factory
@@ -134,10 +140,10 @@ class WorkspacePool(Generic[T]):
         self._pause_fn = pause_fn
         self._resume_fn = resume_fn
 
-        self._min_idle = min_idle
-        self._max_idle = max_idle
-        self._total = total
-        self._create_batch_size = create_batch_size
+        self._pool_min_ready = pool_min_ready
+        self._pool_max_ready = pool_max_ready
+        self._pool_capacity = pool_capacity
+        self._pool_batch_size = pool_batch_size
         self._max_reuse = max_reuse
 
         # FIFO queue of idle (POOLED) entries ready for checkout.
@@ -169,8 +175,8 @@ class WorkspacePool(Generic[T]):
     async def start(self) -> None:
         """Start background tasks.
 
-        Pre-warming to ``min_idle`` happens asynchronously in the
-        background maintain loop — ``start`` returns immediately.
+        Pre-warming to ``pool_min_ready`` happens asynchronously in
+        the background maintain loop — ``start`` returns immediately.
         The first :meth:`acquire` call may block until the initial
         batch of workspaces is ready.
         """
@@ -242,8 +248,8 @@ class WorkspacePool(Generic[T]):
         """Obtain an idle workspace from the pool (FIFO).
 
         The method first tries to dequeue an idle entry without blocking.
-        If the queue is empty *and* the pool has reached its ``total``
-        capacity cap, it falls back to creating an **overflow** workspace
+        If the queue is empty *and* the pool has reached its
+        ``pool_capacity`` cap, it falls back to creating an **overflow** workspace
         directly via the factory (bypassing the pool's capacity limit).
         Overflow entries are returned in ``ACTIVE`` state with
         ``overflow=True``; on :meth:`release`, they are absorbed into
@@ -282,7 +288,7 @@ class WorkspacePool(Generic[T]):
                 entry = self._idle.get_nowait()
             except asyncio.QueueEmpty as queue_empty_exc:
                 # No idle entry available right now.
-                if self.total_managed >= self._total:
+                if self.total_managed >= self._pool_capacity:
                     # Pool is at capacity — fall back to overflow creation
                     # so the caller is not blocked indefinitely.
                     return await self._create_overflow()
@@ -295,7 +301,7 @@ class WorkspacePool(Generic[T]):
                     if remaining <= 0:
                         raise PoolExhaustedError(
                             f"No workspace available within {timeout}s "
-                            f"(total={self._total}, "
+                            f"(pool_capacity={self._pool_capacity}, "
                             f"idle={self.idle_count})",
                         ) from queue_empty_exc
 
@@ -307,7 +313,7 @@ class WorkspacePool(Generic[T]):
                 except asyncio.TimeoutError as timeout_exc:
                     raise PoolExhaustedError(
                         f"No workspace available within {timeout}s "
-                        f"(total={self._total}, "
+                        f"(pool_capacity={self._pool_capacity}, "
                         f"idle={self.idle_count})",
                     ) from timeout_exc
 
@@ -351,8 +357,9 @@ class WorkspacePool(Generic[T]):
         ``pause_fn`` and placed back into the idle queue; otherwise it
         is destroyed.
 
-        For **overflow** entries (created outside the pool's ``total``
-        cap), the pool first checks whether capacity headroom exists.
+        For **overflow** entries (created outside the pool's
+        ``pool_capacity`` cap), the pool first checks whether capacity
+        headroom exists.
         If so the entry is absorbed into ``_all`` and follows the
         normal reset → health-check → pause → re-pool path.  If the
         pool is still at capacity the entry is destroyed immediately.
@@ -370,16 +377,16 @@ class WorkspacePool(Generic[T]):
         # ── overflow entry handling ────────────────────────────────
         if entry.overflow:
             async with self._lock:
-                if self.total_managed < self._total:
+                if self.total_managed < self._pool_capacity:
                     # Absorb into the pool — register in _all and
                     # continue with the normal release flow below.
                     entry.overflow = False
                     self._all[id(entry)] = entry
                     logger.info(
                         "WorkspacePool: absorbing overflow workspace "
-                        "into pool (total_managed=%d, total=%d)",
+                        "into pool (total_managed=%d, pool_capacity=%d)",
                         self.total_managed,
-                        self._total,
+                        self._pool_capacity,
                     )
                 else:
                     # Still at capacity — destroy without reset.
@@ -497,18 +504,18 @@ class WorkspacePool(Generic[T]):
     async def _maintain_loop(self) -> None:
         """Long-lived background task that maintains the pool water level.
 
-        Runs an initial warm-up to ``min_idle``, then periodically
-        checks whether the idle count has drifted outside the
-        ``[min_idle, max_idle]`` band and adjusts accordingly:
+        Runs an initial warm-up to ``pool_min_ready``, then periodically
+        checks whether the ready count has drifted outside the
+        ``[pool_min_ready, pool_max_ready]`` band and adjusts accordingly:
 
-        * **Below ``min_idle``**: replenish up to ``max_idle``.
-        * **Above ``max_idle``**: drain and destroy excess entries.
+        * **Below ``pool_min_ready``**: replenish up to ``pool_max_ready``.
+        * **Above ``pool_max_ready``**: drain and destroy excess entries.
 
         No external signal is needed — the loop is fully self-driven.
         """
-        # Initial warm-up: fill to min_idle.
+        # Initial warm-up: fill to pool_min_ready.
         try:
-            await self._replenish(target=self._min_idle)
+            await self._replenish(target=self._pool_min_ready)
         except Exception:
             logger.exception("WorkspacePool: initial warm-up failed")
 
@@ -523,16 +530,19 @@ class WorkspacePool(Generic[T]):
 
             idle = self.idle_count
 
-            if idle < self._min_idle and self.total_managed < self._total:
+            if (
+                idle < self._pool_min_ready
+                and self.total_managed < self._pool_capacity
+            ):
                 try:
-                    await self._replenish(target=self._max_idle)
+                    await self._replenish(target=self._pool_max_ready)
                 except Exception:
                     logger.exception(
                         "WorkspacePool: replenish cycle failed",
                     )
-            elif idle > self._max_idle:
+            elif idle > self._pool_max_ready:
                 try:
-                    await self._shrink(target=self._max_idle)
+                    await self._shrink(target=self._pool_max_ready)
                 except Exception:
                     logger.exception(
                         "WorkspacePool: shrink cycle failed",
@@ -541,18 +551,18 @@ class WorkspacePool(Generic[T]):
     async def _replenish(self, target: int) -> None:
         """Create new instances until idle count reaches ``target``.
 
-        Respects the ``total`` cap and creates in batches of
-        ``create_batch_size``.
+        Respects the ``pool_capacity`` cap and creates in batches of
+        ``pool_batch_size``.
         """
         while not self._stopping and self.idle_count < target:
             # How many can we still create?
             async with self._lock:
-                headroom = self._total - self.total_managed
+                headroom = self._pool_capacity - self.total_managed
             if headroom <= 0:
                 break
 
             batch = min(
-                self._create_batch_size,
+                self._pool_batch_size,
                 headroom,
                 target - self.idle_count,
             )
@@ -597,7 +607,7 @@ class WorkspacePool(Generic[T]):
             state=PooledState.CREATING,
         )
         async with self._lock:
-            if self._stopping or self.total_managed >= self._total:
+            if self._stopping or self.total_managed >= self._pool_capacity:
                 return
             oid = id(entry)
             self._all[oid] = entry
@@ -636,9 +646,9 @@ class WorkspacePool(Generic[T]):
         """Create an overflow workspace directly via the factory.
 
         Called by :meth:`acquire` when the pool has reached its
-        ``total`` capacity and no idle entries are available.  The
+        ``pool_capacity`` and no ready entries are available.  The
         created entry is **not** registered in ``_all`` and therefore
-        does not count towards the ``total`` cap.
+        does not count towards the ``pool_capacity``.
 
         On :meth:`release`, the entry will be absorbed into the pool
         if capacity permits, or destroyed outright.
@@ -648,9 +658,9 @@ class WorkspacePool(Generic[T]):
             ``overflow=True``.
         """
         logger.warning(
-            "WorkspacePool: pool at capacity (total=%d), "
+            "WorkspacePool: pool at capacity (pool_capacity=%d), "
             "falling back to overflow creation",
-            self._total,
+            self._pool_capacity,
         )
         ws = await self._factory()
         entry = PooledEntry[T](
