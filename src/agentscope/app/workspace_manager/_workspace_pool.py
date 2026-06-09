@@ -82,40 +82,6 @@ class WorkspacePool(Generic[T]):
 
     Type parameter ``T`` is the concrete workspace type (e.g.
     :class:`E2BWorkspace`).
-
-    Args:
-        factory: ``async () -> T`` — creates **and initializes** a fresh
-            workspace instance. Must return a live, ready-to-use workspace.
-        reset_fn: ``async (T) -> None`` — resets the workspace to a clean
-            state after use. Should restart the gateway, wipe files, etc.
-            Called while the workspace is still *running* (before pause).
-            ``None`` means no reset is performed on release; the entry
-            goes directly to the health-check / pause / re-pool path.
-        health_check_fn: ``async (T) -> bool`` — returns ``True`` if the
-            workspace is healthy and can be re-pooled after reset.
-            Called while the workspace is *running*.
-        close_fn: ``async (T) -> None`` — permanently destroys the workspace.
-        pause_fn: ``async (T) -> None`` — suspends the workspace to stop
-            billing.  Called when the workspace enters the POOLED state.
-            ``None`` means idle workspaces stay running (suitable for
-            backends without per-uptime billing).
-        resume_fn: ``async (T) -> None`` — brings a paused workspace back
-            to a running state.  Called when the workspace leaves the
-            POOLED state for ACTIVE.  ``None`` means no resume is needed.
-        pool_min_ready: Minimum number of ready-to-use (idle) instances
-            kept on standby.  When the ready count drops below this
-            threshold, the pool automatically creates new instances in
-            the background.
-        pool_max_ready: Target number of ready-to-use instances after
-            replenishment.  The pool will create instances up to this
-            count when triggered by a ``pool_min_ready`` breach.
-        pool_capacity: Maximum total instances managed by the pool
-            (both in-use and standby combined).  Requests beyond this
-            limit trigger overflow creation.
-        pool_batch_size: How many instances to create concurrently per
-            replenishment cycle.
-        max_reuse: Maximum times a workspace can be recycled before
-            destruction. ``0`` means unlimited.
     """
 
     def __init__(
@@ -133,6 +99,53 @@ class WorkspacePool(Generic[T]):
         pool_batch_size: int = 2,
         max_reuse: int = 0,
     ) -> None:
+        """Initialize the workspace pool.
+
+        Args:
+            factory: ``async () -> T`` — creates **and initializes** a
+                fresh workspace instance. Must return a live,
+                ready-to-use workspace.
+            reset_fn: ``async (T) -> None`` — resets the workspace to a
+                clean state after use. Should restart the gateway, wipe
+                files, etc. Called while the workspace is still *running*
+                (before pause). ``None`` means no reset is performed on
+                release; the entry goes directly to the health-check /
+                pause / re-pool path.
+            health_check_fn: ``async (T) -> bool`` — returns ``True`` if
+                the workspace is healthy and can be re-pooled after
+                reset. Called while the workspace is *running*.
+            close_fn: ``async (T) -> None`` — permanently destroys the
+                workspace.
+            pause_fn: ``async (T) -> None`` — suspends the workspace to
+                stop billing. Called when the workspace enters the
+                POOLED state. ``None`` means idle workspaces stay
+                running (suitable for backends without per-uptime
+                billing).
+            resume_fn: ``async (T) -> None`` — brings a paused workspace
+                back to a running state. Called when the workspace
+                leaves the POOLED state for ACTIVE. ``None`` means no
+                resume is needed.
+            pool_min_ready (`int`, defaults to `1`):
+                Minimum number of ready-to-use (idle) instances kept
+                on standby. When the ready count drops below this
+                threshold, the pool automatically creates new instances
+                in the background.
+            pool_max_ready (`int`, defaults to `3`):
+                Target number of ready-to-use instances after
+                replenishment. The pool will create instances up to
+                this count when triggered by a ``pool_min_ready``
+                breach.
+            pool_capacity (`int`, defaults to `10`):
+                Maximum total instances managed by the pool (both
+                in-use and standby combined). Requests beyond this
+                limit trigger overflow creation.
+            pool_batch_size (`int`, defaults to `2`):
+                How many instances to create concurrently per
+                replenishment cycle.
+            max_reuse (`int`, defaults to `0`):
+                Maximum times a workspace can be recycled before
+                destruction. ``0`` means unlimited.
+        """
         self._factory = factory
         self._reset_fn = reset_fn
         self._health_check_fn = health_check_fn

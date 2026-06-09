@@ -10,8 +10,8 @@ ID-keyed TTL cache with a pre-warming **pool** (see
   per-workspace-id cache so resources are not double-tracked.
 * **Instance lifecycle**: CREATING → POOLED → ACTIVE → RESETTING →
   (healthy → POOLED | unhealthy → DESTROYED).
-* **Scheduling**: ``min_idle`` / ``max_idle`` / ``total`` /
-  ``create_batch_size`` govern capacity and pre-warming.
+* **Scheduling**: ``pool_min_ready`` / ``pool_max_ready`` /
+  ``pool_capacity`` / ``pool_batch_size`` govern capacity and pre-warming.
 * **Maintenance**: ``max_reuse`` caps how many times a single sandbox
   is recycled; a background health-check loop probes idle instances.
 * **Reset**: gateway restart + workspace file cleanup + env-var wipe.
@@ -76,10 +76,10 @@ class RLWorkspaceManager(WorkspaceManagerBase):
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         # ── pooling parameters ─────────────────────────────────
-        min_idle: int = 1,
-        max_idle: int = 3,
-        total: int = 10,
-        create_batch_size: int = 2,
+        pool_min_ready: int = 1,
+        pool_max_ready: int = 3,
+        pool_capacity: int = 10,
+        pool_batch_size: int = 2,
         max_reuse: int = 50,
     ) -> None:
         """Initialize the RL workspace manager.
@@ -109,19 +109,24 @@ class RLWorkspaceManager(WorkspaceManagerBase):
                 MCP clients seeded into brand-new workspaces.
             skill_paths (`list[str] | None`, optional):
                 Skill directories seeded into brand-new workspaces.
-            min_idle (`int`, defaults to `1`):
-                Minimum number of idle instances to maintain. When
-                the idle count drops below this on ``acquire``, a
-                batch replenishment is triggered.
-            max_idle (`int`, defaults to `3`):
-                Target idle count after batch replenishment.
-            total (`int`, defaults to `10`):
-                Hard cap on total managed instances (idle + active).
-            create_batch_size (`int`, defaults to `2`):
-                Maximum concurrent ``factory()`` calls per
-                replenishment batch.
+            pool_min_ready (`int`, defaults to `1`):
+                Pool: minimum number of ready-to-use instances kept
+                on standby. When the count drops below this threshold,
+                the pool automatically creates new instances in the
+                background.
+            pool_max_ready (`int`, defaults to `3`):
+                Pool: target number of ready-to-use instances after
+                replenishment. The pool will create instances up to
+                this count when triggered.
+            pool_capacity (`int`, defaults to `10`):
+                Pool: maximum total instances managed by the pool
+                (both in-use and standby combined). Requests beyond
+                this limit trigger overflow creation.
+            pool_batch_size (`int`, defaults to `2`):
+                Pool: how many instances to create concurrently per
+                replenishment cycle.
             max_reuse (`int`, defaults to `50`):
-                Maximum times a single sandbox can be recycled.
+                Pool: maximum times a single sandbox can be recycled.
                 ``0`` means unlimited.
         """
         # ── E2B workspace configuration ────────────────────────
@@ -149,10 +154,10 @@ class RLWorkspaceManager(WorkspaceManagerBase):
             close_fn=self._close_workspace,
             pause_fn=self._pause_workspace,
             resume_fn=self._resume_workspace,
-            min_idle=min_idle,
-            max_idle=max_idle,
-            total=total,
-            create_batch_size=create_batch_size,
+            pool_min_ready=pool_min_ready,
+            pool_max_ready=pool_max_ready,
+            pool_capacity=pool_capacity,
+            pool_batch_size=pool_batch_size,
             max_reuse=max_reuse,
         )
 

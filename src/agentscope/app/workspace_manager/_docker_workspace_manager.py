@@ -447,6 +447,13 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         workspace_id: str,
     ) -> DockerWorkspace:
+        """Return an active workspace, checking out from the pool if needed.
+
+        If ``workspace_id`` is already active, its workspace is returned
+        directly. Otherwise a fresh entry is acquired from the pool,
+        the host workdir is synced into the container, and the entry is
+        registered as active.
+        """
         async with self._lock:
             slot = self._active.get(workspace_id)
             if slot is not None:
@@ -492,6 +499,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> DockerWorkspace:
+        """Create a new workspace by generating an id and checking out."""
         workspace_id = uuid.uuid4().hex
         return await self._pool_get_workspace(
             user_id,
@@ -500,6 +508,11 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         )
 
     async def _pool_close_workspace(self, workspace_id: str) -> None:
+        """Close a single active workspace and release it back to the pool.
+
+        Syncs the container filesystem back to the host workdir before
+        releasing so that data persists across pool cycles.
+        """
         async with self._lock:
             slot = self._active.pop(workspace_id, None)
         if slot is None:
@@ -524,6 +537,11 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         await self._pool.release(entry)
 
     async def _pool_close_all(self) -> None:
+        """Close every active workspace and release them back to the pool.
+
+        Syncs all active containers back to their host workdirs before
+        releasing.
+        """
         async with self._lock:
             slots = list(self._active.items())
             self._active.clear()
