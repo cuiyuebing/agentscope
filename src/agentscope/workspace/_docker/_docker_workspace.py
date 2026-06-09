@@ -77,7 +77,6 @@ from ._make_dockerfile import (
     prepare_build_context,
 )
 
-
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have a Docker-based workspace. All tool calls execute **inside the
 container** at ``{workdir}``.
@@ -650,6 +649,28 @@ class DockerWorkspace(WorkspaceBase):
             return await self._gateway.health()
         except Exception:
             return False
+
+    # ── bulk tar I/O (used by pool-mode sync) ───────────────────
+
+    async def upload_tar(self, tar_data: bytes) -> None:
+        """Upload a tar archive and extract it into ``/workspace``.
+
+        Args:
+            tar_data: Raw tar bytes whose entries are relative paths
+                (e.g. ``data/file.txt``). They will be extracted under
+                ``CONTAINER_WORKDIR``.
+        """
+        await self._container.put_archive(CONTAINER_WORKDIR, tar_data)
+
+    async def download_tar(self) -> tarfile.TarFile:
+        """Download ``/workspace`` as a tar archive.
+
+        Returns:
+            A :class:`tarfile.TarFile` whose top-level entry is the
+            ``workspace/`` directory itself. The caller is responsible
+            for closing it.
+        """
+        return await self._container.get_archive(CONTAINER_WORKDIR)
 
     # ── instructions ────────────────────────────────────────────
 

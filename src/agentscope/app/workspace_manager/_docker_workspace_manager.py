@@ -26,7 +26,9 @@ constructor):
 """
 
 import asyncio
+import io
 import os
+import tarfile
 import time
 import uuid
 from typing import Self
@@ -150,7 +152,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self._sweep_task: asyncio.Task | None = None
 
         # ── Pool mode (pool_enabled=True) ─────────────────────
-        self._active: dict[str, PooledEntry[DockerWorkspace]] = {}
+        # workspace_id → (pool entry, host workdir or "")
+        self._active: dict[str, tuple[PooledEntry[DockerWorkspace], str]] = {}
         self._pool: WorkspacePool[DockerWorkspace] | None = None
         if pool_enabled:
             self._pool = WorkspacePool[DockerWorkspace](
@@ -253,6 +256,85 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 "DockerWorkspaceManager[pool]: failed to close %s",
                 ws.workspace_id,
             )
+
+    # ── tar-based sync helpers (pool mode) ─────────────────────────
+
+    @staticmethod
+    async def _sync_host_to_container(
+        ws: DockerWorkspace,
+        host_workdir: str,
+    ) -> None:
+        """Tar the host workdir and upload into the container."""
+        if not os.path.isdir(host_workdir):
+            return
+        entries = os.listdir(host_workdir)
+        if not entries:
+            return
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            for entry in entries:
+                tf.add(os.path.join(host_workdir, entry), arcname=entry)
+
+        await ws.upload_tar(buf.getvalue())
+        logger.info(
+            "DockerWorkspaceManager[pool]: synced host -> container "
+            "(%d entries)",
+            len(entries),
+        )
+
+    @staticmethod
+    async def _sync_container_to_host(
+        ws: DockerWorkspace,
+        host_workdir: str,
+    ) -> None:
+        """Download the container workspace tar and extract to host."""
+        os.makedirs(host_workdir, exist_ok=True)
+
+        try:
+            tar_obj = await ws.download_tar()
+        except Exception:
+            logger.warning(
+                "DockerWorkspaceManager[pool]: download_tar failed, "
+                "skipping sync-back",
+            )
+            return
+
+        try:
+            # The archive root is the directory itself (e.g. "workspace/").
+            # Strip this prefix so contents land directly in host_workdir.
+            members = tar_obj.getmembers()
+            prefix = ""
+            for m in members:
+                if m.isdir():
+                    prefix = m.name.rstrip("/") + "/"
+                    break
+
+            for member in members:
+                if member.name.rstrip("/") == prefix.rstrip("/"):
+                    continue
+                if prefix and member.name.startswith(prefix):
+                    member.name = member.name[len(prefix) :]
+                if not member.name:
+                    continue
+                if member.name.startswith("/") or ".." in member.name.split(
+                    "/",
+                ):
+                    continue
+                if member.isfile() or member.issym() or member.islnk():
+                    tar_obj.extract(member, path=host_workdir)
+                elif member.isdir():
+                    os.makedirs(
+                        os.path.join(host_workdir, member.name),
+                        exist_ok=True,
+                    )
+        finally:
+            tar_obj.close()
+
+        logger.info(
+            "DockerWorkspaceManager[pool]: synced container -> host %s",
+            host_workdir,
+        )
 
     # ── public API ────────────────────────────────────────────────
 
@@ -363,26 +445,42 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
 
     async def _pool_get_workspace(
         self,
-        user_id: str,  # noqa: W0613
-        agent_id: str,  # noqa: W0613
+        user_id: str,
+        agent_id: str,
         workspace_id: str,
     ) -> DockerWorkspace:
-        del user_id, agent_id
         async with self._lock:
-            entry = self._active.get(workspace_id)
-            if entry is not None:
-                return entry.workspace
+            slot = self._active.get(workspace_id)
+            if slot is not None:
+                return slot[0].workspace
 
         assert self._pool is not None
         entry = await self._pool.acquire()
         ws = entry.workspace
 
+        host_workdir = (
+            self._workdir_for(user_id, agent_id) if self._basedir else ""
+        )
+
         async with self._lock:
             existing = self._active.get(workspace_id)
             if existing is not None:
                 self._pool.release_background(entry)
-                return existing.workspace
-            self._active[workspace_id] = entry
+                return existing[0].workspace
+            self._active[workspace_id] = (entry, host_workdir)
+
+        # Sync host workdir -> container so pool-mode workspaces get the
+        # same directory structure as bind-mount (TTL-cache) mode.
+        if host_workdir:
+            os.makedirs(host_workdir, exist_ok=True)
+            try:
+                await self._sync_host_to_container(ws, host_workdir)
+            except Exception:
+                logger.exception(
+                    "DockerWorkspaceManager[pool]: host->container sync "
+                    "failed for workspace_id=%s",
+                    workspace_id,
+                )
 
         logger.info(
             "DockerWorkspaceManager[pool]: checked out %s for workspace_id=%s",
@@ -405,21 +503,53 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
 
     async def _pool_close_workspace(self, workspace_id: str) -> None:
         async with self._lock:
-            entry = self._active.pop(workspace_id, None)
-        if entry is None:
+            slot = self._active.pop(workspace_id, None)
+        if slot is None:
             return
+        entry, host_workdir = slot
+
+        # Sync container -> host before releasing so data persists.
+        if host_workdir:
+            try:
+                await self._sync_container_to_host(
+                    entry.workspace,
+                    host_workdir,
+                )
+            except Exception:
+                logger.exception(
+                    "DockerWorkspaceManager[pool]: container->host sync "
+                    "failed for workspace_id=%s",
+                    workspace_id,
+                )
+
         assert self._pool is not None
         await self._pool.release(entry)
 
     async def _pool_close_all(self) -> None:
         async with self._lock:
-            entries = list(self._active.items())
+            slots = list(self._active.items())
             self._active.clear()
-        if not entries:
+        if not slots:
             return
+
+        # Sync all active containers back to host before releasing.
+        for wid, (entry, host_workdir) in slots:
+            if host_workdir:
+                try:
+                    await self._sync_container_to_host(
+                        entry.workspace,
+                        host_workdir,
+                    )
+                except Exception:
+                    logger.exception(
+                        "DockerWorkspaceManager[pool]: container->host "
+                        "sync failed for workspace_id=%s during close_all",
+                        wid,
+                    )
+
         assert self._pool is not None
         await asyncio.gather(
-            *(self._pool.release(entry) for _, entry in entries),
+            *(self._pool.release(entry) for _, (entry, _) in slots),
             return_exceptions=True,
         )
 
