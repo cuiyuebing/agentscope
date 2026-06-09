@@ -262,8 +262,10 @@ class WorkspacePool(Generic[T]):
 
         The method first tries to dequeue an idle entry without blocking.
         If the queue is empty *and* the pool has reached its
-        ``pool_capacity`` cap, it falls back to creating an **overflow** workspace
-        directly via the factory (bypassing the pool's capacity limit).
+        ``pool_capacity`` cap, it falls back to creating an **overflow**
+        workspace directly via the factory (bypassing the pool's capacity
+        limit).
+
         Overflow entries are returned in ``ACTIVE`` state with
         ``overflow=True``; on :meth:`release`, they are absorbed into
         the pool if headroom exists, or destroyed otherwise.
