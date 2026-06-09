@@ -12,7 +12,6 @@ __all__ = [
     "BackgroundTaskManager",
     "CancelDispatcher",
     "ChatRunRegistry",
-    "RLWorkspaceManager",
     "SchedulerManager",
     "WakeupDispatcher",
 ]
