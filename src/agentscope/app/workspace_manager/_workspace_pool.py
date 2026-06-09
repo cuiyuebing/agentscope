@@ -4,6 +4,8 @@
 Designed according to the Pooling Design specification:
 
 * **Lifecycle**: CREATING → POOLED → ACTIVE → RESETTING → POOLED / DESTROYED
+  When ``reset_fn`` is ``None``, the RESETTING phase is a no-op and the
+  entry proceeds directly to health-check / pause / re-pool.
 * **Scheduling**: ``min_idle``/``max_idle``/``total``/``create_batch_size``
   govern pre-warming and capacity.
 * **Maintenance**: A unified background ``_maintain_loop`` keeps the idle
@@ -86,6 +88,8 @@ class WorkspacePool(Generic[T]):
         reset_fn: ``async (T) -> None`` — resets the workspace to a clean
             state after use. Should restart the gateway, wipe files, etc.
             Called while the workspace is still *running* (before pause).
+            ``None`` means no reset is performed on release; the entry
+            goes directly to the health-check / pause / re-pool path.
         health_check_fn: ``async (T) -> bool`` — returns ``True`` if the
             workspace is healthy and can be re-pooled after reset.
             Called while the workspace is *running*.
@@ -112,7 +116,7 @@ class WorkspacePool(Generic[T]):
         self,
         *,
         factory: Callable[[], Awaitable[T]],
-        reset_fn: Callable[[T], Awaitable[None]],
+        reset_fn: Callable[[T], Awaitable[None]] | None = None,
         health_check_fn: Callable[[T], Awaitable[bool]],
         close_fn: Callable[[T], Awaitable[None]],
         pause_fn: Callable[[T], Awaitable[None]] | None = None,
@@ -398,12 +402,13 @@ class WorkspacePool(Generic[T]):
             return
 
         entry.state = PooledState.RESETTING
-        try:
-            await self._reset_fn(entry.workspace)
-        except Exception:
-            logger.exception("WorkspacePool: reset failed, destroying")
-            await self._destroy_entry(entry)
-            return
+        if self._reset_fn is not None:
+            try:
+                await self._reset_fn(entry.workspace)
+            except Exception:
+                logger.exception("WorkspacePool: reset failed, destroying")
+                await self._destroy_entry(entry)
+                return
 
         # Health check after reset (workspace is still running here).
         try:

@@ -79,7 +79,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         max_idle: int = 3,
         total: int = 10,
         create_batch_size: int = 2,
-        max_reuse: int = 50,
     ) -> None:
         """Initialize the docker workspace manager.
 
@@ -120,9 +119,9 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 ``pool_enabled=False``.
             pool_enabled (`bool`, defaults to `False`):
                 When ``True``, use a pre-warming pool instead of the
-                TTL cache. The pool provides stronger isolation by
-                destroying and recreating containers on each release
-                (via :meth:`DockerWorkspace.heavy_reset_for_pool`).
+                TTL cache. Each container is used exactly once
+                (``max_reuse=1``) and destroyed on release; the pool
+                background loop creates fresh replacements.
             min_idle (`int`, defaults to `1`):
                 Pool: minimum idle instances to maintain.
             max_idle (`int`, defaults to `3`):
@@ -131,8 +130,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 Pool: hard cap on total managed instances.
             create_batch_size (`int`, defaults to `2`):
                 Pool: concurrent factory calls per replenishment.
-            max_reuse (`int`, defaults to `50`):
-                Pool: max recycling count per container.
         """
         self._basedir = os.path.abspath(basedir) if basedir else ""
         self._base_image = base_image
@@ -158,7 +155,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         if pool_enabled:
             self._pool = WorkspacePool[DockerWorkspace](
                 factory=self._pool_factory,
-                reset_fn=self._pool_reset,
+                reset_fn=None,
                 health_check_fn=self._pool_health_check,
                 close_fn=self._pool_close,
                 pause_fn=self._pool_pause,
@@ -167,7 +164,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 max_idle=max_idle,
                 total=total,
                 create_batch_size=create_batch_size,
-                max_reuse=max_reuse,
+                max_reuse=1,
             )
 
     # ── isolation helpers ─────────────────────────────────────────
@@ -223,13 +220,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             ws.workspace_id,
         )
         return ws
-
-    async def _pool_reset(self, ws: DockerWorkspace) -> None:
-        """Heavy reset: destroy container and recreate for strong isolation."""
-        await ws.heavy_reset_for_pool(
-            default_mcps=self._default_mcps or None,
-            skill_paths=self._skill_paths or None,
-        )
 
     @staticmethod
     async def _pool_health_check(ws: DockerWorkspace) -> bool:
